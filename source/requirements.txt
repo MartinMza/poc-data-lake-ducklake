@@ -1,0 +1,2 @@
+# Solo para --out postgres (csv/sqlite usan stdlib).
+psycopg[binary]==3.2.9

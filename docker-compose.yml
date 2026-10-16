@@ -1,0 +1,135 @@
+# PoC Data Lake — lakehouse-infra (OpenSpec `poc-data-lake-ducklake`, tareas 2.1–2.3)
+#
+# Stack 100% local: postgres-catalog (catálogo DuckLake), postgres-source
+# (origen simulado, workstream 3), Garage nodo único (S3 compatible),
+# prefect-server (orquestación, workstream 6).
+#
+# Uso:
+#   cp .env.example .env   # opcional, hay defaults locales
+#   docker compose up -d
+#   ./scripts/bootstrap.sh
+#   python3 scripts/smoke_ducklake.py
+#
+# Versiones fijadas (ver scripts/README.md para rationale y cómo actualizar):
+#   postgres:17.6-bookworm, dxflrs/garage:v2.4.1,
+#   prefecthq/prefect:3.6.22-python3.12, duckdb==1.4.4 (scripts/requirements-smoke.txt)
+#   mcr.microsoft.com/mssql/server:2022-CU27-ubuntu-22.04 (OpenSpec mssql-bak-source, tarea 1.2:
+#     CU27 = 16.0.4295.3, vigente a sep-2026; verificado que el tag existe en MCR.
+#     Si el .bak real requiere versión mayor, subir el CU/imagen.)
+
+services:
+  postgres-catalog:
+    image: postgres:17.6-bookworm
+    container_name: dulse-postgres-catalog
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${CATALOG_DB:-ducklake_catalog}
+      POSTGRES_USER: ${CATALOG_USER:-ducklake}
+      POSTGRES_PASSWORD: ${CATALOG_PASSWORD:-ducklake}
+      PGDATA: /var/lib/postgresql/data/pgdata
+    ports:
+      - "${CATALOG_PORT:-5433}:5432"
+    volumes:
+      - pgcatalog-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+
+  postgres-source:
+    image: postgres:17.6-bookworm
+    container_name: dulse-postgres-source
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${SOURCE_DB:-source_db}
+      POSTGRES_USER: ${SOURCE_USER:-source_user}
+      POSTGRES_PASSWORD: ${SOURCE_PASSWORD:-source_password}
+      PGDATA: /var/lib/postgresql/data/pgdata
+    ports:
+      - "${SOURCE_PORT:-5434}:5432"
+    volumes:
+      - pgsource-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+
+  garage:
+    image: dxflrs/garage:v2.4.1
+    container_name: dulse-garage
+    restart: unless-stopped
+    entrypoint: ["/garage"]
+    command: ["server", "--single-node", "--default-bucket"]
+    environment:
+      GARAGE_DEFAULT_ACCESS_KEY: ${GARAGE_S3_KEY_ID:-GK0123456789abcdef0123456789abcdef}
+      GARAGE_DEFAULT_SECRET_KEY: ${GARAGE_S3_SECRET:-0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef}
+      GARAGE_DEFAULT_BUCKET: ${LAKEHOUSE_BUCKET:-lakehouse}
+    ports:
+      - "${GARAGE_S3_PORT:-3900}:3900"     # S3 API
+      - "${GARAGE_RPC_PORT:-3901}:3901"     # RPC interno
+      - "${GARAGE_WEB_PORT:-3902}:3902"     # hosting estático
+      - "${GARAGE_ADMIN_PORT:-3903}:3903"   # admin API
+    volumes:
+      - garage-meta:/var/lib/garage/meta
+      - garage-data:/var/lib/garage/data
+      - ./docker/garage.toml:/etc/garage.toml:ro
+    healthcheck:
+      test: ["CMD", "/garage", "status"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 15s
+
+  prefect-server:
+    image: prefecthq/prefect:3.6.22-python3.12
+    container_name: dulse-prefect-server
+    restart: unless-stopped
+    entrypoint: ["prefect"]
+    command: ["server", "start", "--host", "0.0.0.0"]
+    ports:
+      - "${PREFECT_PORT:-4200}:4200"
+    volumes:
+      - prefect-data:/root/.prefect
+    environment:
+      PREFECT_SERVER_API_HOST: "0.0.0.0"
+      PREFECT_UI_ENABLED: "true"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:4200/api/health', timeout=5).status in (200, 204) else 1)"]
+      interval: 10s
+      timeout: 10s
+      retries: 18
+      start_period: 30s
+
+  # OpenSpec mssql-bak-source, tarea 2.1. Fuente MSSQL del operador (.bak diario).
+  # No toca los servicios existentes. Requiere MSSQL_SA_PASSWORD en .env
+  # (falla explícito si vacía); el .bak se coloca en ./mssql-backup/ (gitignored).
+  # MSSQL pide >=2GB RAM; ver design/riesgos si el host no da.
+  mssql:
+    image: mcr.microsoft.com/mssql/server:2022-CU27-ubuntu-22.04
+    container_name: dulse-mssql
+    restart: unless-stopped
+    environment:
+      ACCEPT_EULA: "Y"
+      MSSQL_PID: Developer
+      MSSQL_SA_PASSWORD: "${MSSQL_SA_PASSWORD:?MSSQL_SA_PASSWORD vacia - definila en .env (ver .env.example)}"
+    ports:
+      - "${MSSQL_PORT:-1433}:1433"
+    volumes:
+      - ./mssql-backup:/var/opt/mssql/backup
+    healthcheck:
+      test: ["CMD-SHELL", "/opt/mssql-tools18/bin/sqlcmd -S localhost -U sa -P \"$$MSSQL_SA_PASSWORD\" -Q \"SELECT 1\" -C -l 5 > /dev/null 2>&1"]
+      interval: 10s
+      timeout: 10s
+      retries: 18
+      start_period: 30s
+
+volumes:
+  pgcatalog-data:
+  pgsource-data:
+  garage-meta:
+  garage-data:
+  prefect-data:

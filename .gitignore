@@ -1,0 +1,14 @@
+# PoC-local: nunca commitear credenciales efectivas ni artefactos de corrida.
+.env
+scripts/.s3-credentials.env
+*.duckdb
+*.duckdb.wal
+__pycache__/
+# 7.1: los backups (dump + espejo del bucket) son artefactos locales.
+backups/
+# mssql-bak-source 2.1: .bak del operador + pruebas locales, fuera del repo.
+mssql-backup/
+*.bak
+# mssql-fast-ingest: TSVs transitorios del export bcp (se regeneran por corrida).
+mssql-fast/
+*.tsv

@@ -1,0 +1,15 @@
+# bronze-ingestion — deps fijadas (OpenSpec poc-data-lake-ducklake, tareas 4.x).
+# Matriz de compatibilidad: openspec/changes/poc-data-lake-ducklake/specs/compat-matrix.md
+# dlt 1.31.0 = última en PyPI al 2026-10-08 con destino nativo `ducklake` (desde 1.17.0).
+# duckdb 1.5.6 = verificado con dlt + DuckLake 1.0 (exige DuckDB >=1.5.2).
+# NOTA: scripts/ usa duckdb==1.4.4 LTS en su propio venv; este venv es independiente.
+dlt[ducklake,s3,postgres,sql-database]==1.31.0
+duckdb==1.5.6
+sqlalchemy==2.1.4
+psycopg2-binary==2.9.13
+# Solo para correr source/generate.py --out postgres desde este venv:
+psycopg[binary]==3.2.9
+# mssql-bak-source 4.1: driver MSSQL (pyodbc + ODBC Driver 18 user-space en
+# ~/.local/mssql-odbc; ver pipeline_mssql.py y README). Solo lo usa
+# pipeline_mssql.py; pipeline.py (postgres) no cambia comportamiento.
+pyodbc==5.3.0

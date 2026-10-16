@@ -1,0 +1,41 @@
+# PoC Data Lake — perfil dbt-duckdb contra el MISMO DuckLake del stack
+# (OpenSpec poc-data-lake-ducklake, tareas 5.1–5.4).
+#
+# Attach canónico (ver scripts/smoke_ducklake.py y specs/compat-matrix.md §1.2):
+# catálogo postgres-catalog + DATA_PATH s3://lakehouse/data/ en Garage.
+# El secret S3 con endpoint custom es la pata que la matriz (§1.2, caveat 2)
+# dejó sin smoke test: aquí queda resuelta vía bloque `secrets` del adapter
+# (dbt-duckdb >= 1.4; verificado en 1.11.0: secrets_sql se ejecuta ANTES del
+# ATTACH, environments/__init__.py).
+#
+# Credenciales solo-PoC-local (las mismas de docker-compose.yml/.env.example).
+# dbt-core==1.12.5 + dbt-duckdb==1.11.0 (línea 1.x; dbt v2 cambia a
+# catalogs.yml y queda fuera del PoC). Ver dbt/requirements.txt.
+
+dulse:
+  target: dev
+  outputs:
+    dev:
+      type: duckdb
+      # DuckDB efímero local: todos los modelos viven en el lake adjunto
+      # (cada modelo fija database: lake). Nada se materializa aquí.
+      path: ":memory:"
+      schema: main
+      threads: 4
+      extensions:
+        - ducklake
+        - postgres
+        - httpfs
+      secrets:
+        - type: s3
+          key_id: "GK0123456789abcdef0123456789abcdef"
+          secret: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+          endpoint: "localhost:3900"
+          url_style: "path"
+          use_ssl: false
+          region: "garage"
+      attach:
+        - path: "ducklake:postgres:dbname=ducklake_catalog host=localhost port=5433 user=ducklake password=ducklake"
+          alias: lake
+          options:
+            DATA_PATH: "s3://lakehouse/data/"

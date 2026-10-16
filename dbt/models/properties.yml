@@ -1,0 +1,97 @@
+version: 2
+
+models:
+  - name: silver_customers
+    columns:
+      - name: customer_id
+        tests:
+          - not_null
+          - unique
+      - name: email
+        tests:
+          - not_null
+
+  - name: silver_units
+    columns:
+      - name: unit_id
+        tests:
+          - not_null
+          - unique
+      - name: monthly_rent
+        tests:
+          - not_null
+
+  - name: silver_leases
+    columns:
+      - name: lease_id
+        tests:
+          - not_null
+          - unique
+      - name: customer_id
+        tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('silver_customers')
+                field: customer_id
+      - name: unit_id
+        tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('silver_units')
+                field: unit_id
+
+  - name: silver_payments
+    columns:
+      - name: payment_id
+        tests:
+          - not_null
+          - unique
+      - name: lease_id
+        tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('silver_leases')
+                field: lease_id
+      - name: amount
+        tests:
+          - not_null
+
+  - name: gold_monthly_revenue
+    columns:
+      - name: month
+        tests:
+          - not_null
+      - name: currency
+        tests:
+          - not_null
+      - name: total_amount
+        tests:
+          - not_null
+
+  - name: gold_customer_revenue
+    columns:
+      - name: customer_id
+        tests:
+          - not_null
+          - unique
+          - relationships:
+              arguments:
+                to: ref('silver_customers')
+                field: customer_id
+      - name: total_paid
+        tests:
+          - not_null
+
+  - name: gold_unit_performance
+    columns:
+      - name: unit_id
+        tests:
+          - not_null
+          - unique
+          - relationships:
+              arguments:
+                to: ref('silver_units')
+                field: unit_id

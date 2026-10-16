@@ -1,0 +1,21 @@
+version: 2
+
+# Fuentes bronze en el MISMO DuckLake (database `lake`, alias del ATTACH en
+# profiles.yml). El esquema se resuelve por variable para poder validar este
+# slice con fixtures sin tocar el esquema `bronze` real (poblado en paralelo
+# por el slice bronze-ingestion):
+#   dbt run --vars '{bronze_schema: bronze_fixture}'   # fixtures
+#   dbt run                                           # bronze real (default)
+sources:
+  - name: bronze
+    database: lake
+    schema: "{{ var('bronze_schema', 'bronze') }}"
+    tables:
+      - name: customers
+        identifier: customers
+      - name: units
+        identifier: units
+      - name: leases
+        identifier: leases
+      - name: payments
+        identifier: payments

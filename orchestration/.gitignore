@@ -1,0 +1,4 @@
+.venv/
+__pycache__/
+# Marca local del último restore exitoso (spec bak-watch-restore).
+.last_restore.json

@@ -1,0 +1,22 @@
+name: dulse
+version: 1.0.0
+config-version: 2
+
+# PoC Data Lake — modelos silver/gold sobre el DuckLake compartido
+# (OpenSpec poc-data-lake-ducklake, spec silver-gold-models).
+# dbt-core==1.12.5 / dbt-duckdb==1.11.0 (línea 1.x; ver profiles.yml).
+profile: dulse
+
+model-paths: ["models"]
+macro-paths: ["macros"]
+target-path: "target"
+log-path: "logs"
+
+models:
+  dulse:
+    +materialized: table
+    +database: lake
+    silver:
+      +schema: silver
+    gold:
+      +schema: gold

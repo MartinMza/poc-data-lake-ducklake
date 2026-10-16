@@ -1,0 +1,7 @@
+# orchestration — deps fijadas (OpenSpec poc-data-lake-ducklake, tareas 6.1-6.2).
+# Matriz de compatibilidad: openspec/changes/poc-data-lake-ducklake/specs/compat-matrix.md §1.3
+# prefect 3.8.8 = pin de la matriz (imagen prefecthq/prefect:X-python3.12).
+# NOTA: el servidor del compose corre 3.6.22 (no tocar por alcance del slice);
+# el cliente 3.8.8 opera contra él con un warning de versión (verificado:
+# flow runs quedan tracked y visibles en la API). Ver orchestration/README.md.
+prefect==3.8.8

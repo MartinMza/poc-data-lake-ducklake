@@ -1,0 +1,32 @@
+# Garage nodo único — PoC local (OpenSpec poc-data-lake-ducklake, tarea 2.1).
+# Derivado del quick-start oficial de Garage (single-node, replication_factor=1).
+# Los secretos aquí son FIJOS y SOLO para PoC local (sin datos reales).
+# No reutilizar en ningún entorno compartido.
+# Rutas alineadas con los volúmenes del compose: garage-meta, garage-data.
+
+metadata_dir = "/var/lib/garage/meta"
+data_dir = "/var/lib/garage/data"
+db_engine = "sqlite"
+
+replication_factor = 1
+
+rpc_bind_addr = "[::]:3901"
+rpc_public_addr = "127.0.0.1:3901"
+# 32 bytes en hex (64 caracteres). Valor local-only, no es un secreto real.
+rpc_secret = "a1b2c3d4e5f60718293a4b5c6d7e8f90a1b2c3d4e5f60718293a4b5c6d7e8f90"
+
+[s3_api]
+s3_region = "garage"
+api_bind_addr = "[::]:3900"
+root_domain = ".s3.garage.localhost"
+
+[s3_web]
+bind_addr = "[::]:3902"
+root_domain = ".web.garage.localhost"
+index = "index.html"
+
+[admin]
+api_bind_addr = "[::]:3903"
+# Tokens administrativos solo-PoC-local.
+admin_token = "dulse-local-admin-token-poc-only-0001"
+metrics_token = "dulse-local-metrics-token-poc-only-0001"
