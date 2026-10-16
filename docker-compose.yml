@@ -127,6 +127,37 @@ services:
       retries: 18
       start_period: 30s
 
+  lake-api:
+    build:
+      context: .
+      dockerfile: api/Dockerfile
+    container_name: dulse-lake-api
+    restart: unless-stopped
+    ports:
+      - "${API_PORT:-8000}:8000"
+    environment:
+      CATALOG_HOST: postgres-catalog
+      CATALOG_PORT: "5432"
+      CATALOG_DB: ${CATALOG_DB:-ducklake_catalog}
+      CATALOG_USER: ${CATALOG_USER:-ducklake}
+      CATALOG_PASSWORD: ${CATALOG_PASSWORD:-ducklake}
+      GARAGE_S3_ENDPOINT: http://garage:3900
+      GARAGE_S3_KEY_ID: ${GARAGE_S3_KEY_ID:-GK0123456789abcdef0123456789abcdef}
+      GARAGE_S3_SECRET: ${GARAGE_S3_SECRET:-0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef}
+      GARAGE_S3_REGION: ${GARAGE_S3_REGION:-garage}
+      DUCKLAKE_DATA_PATH: ${DUCKLAKE_DATA_PATH:-s3://lakehouse/data/}
+    depends_on:
+      postgres-catalog:
+        condition: service_healthy
+      garage:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 10s
+
 volumes:
   pgcatalog-data:
   pgsource-data:
