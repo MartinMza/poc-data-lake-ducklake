@@ -1,0 +1,18 @@
+# Excluir backups pesados, entornos virtuales locales y cachés del contexto de Docker build
+.git
+.codegraph
+.pytest_cache
+**/__pycache__
+**/.venv
+mssql-backup/
+*.bak
+*.tar
+*.tar.gz
+*.tgz
+*.tsv
+mssql-fast/
+backups/
+dbt/target/
+dbt/logs/
+*.duckdb
+*.duckdb.wal

@@ -36,6 +36,14 @@ Versiones fijadas (matriz completa en
 
 ## Setup desde cero
 
+Un solo comando idempotente (crea `.env`, levanta contenedores, corre bootstrap, prepara venvs, genera datos si faltan, ingesta bronze, corre dbt y valida la API/MCP):
+
+```bash
+./scripts/setup.sh                  # setup completo (usa --scale base o --start-api si se desea)
+```
+
+O paso a paso manual:
+
 ```bash
 cp .env.example .env   # opcional (hay defaults locales)
 docker compose up -d

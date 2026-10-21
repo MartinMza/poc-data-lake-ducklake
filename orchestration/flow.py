@@ -45,6 +45,7 @@ import shlex
 import shutil
 import subprocess
 import sys
+import tarfile
 import time
 from pathlib import Path
 
@@ -110,13 +111,25 @@ def _stat_sig(path: Path) -> tuple[int, int]:
     return (st.st_size, st.st_mtime_ns)
 
 
+TAR_SUFFIXES = (".tar.gz", ".tgz", ".tar.bz2", ".tar.xz", ".tar")
+
+
+def _is_tar_archive(name: str) -> bool:
+    low = name.lower()
+    return any(low.endswith(sfx) for sfx in TAR_SUFFIXES)
+
+
 def _resolve_restore_target(bak_name: str) -> str:
     """DB destino del restore: `MSSQL_DATABASE` si está definida, si no el
-    default de `scripts/restore_mssql.sh` (basename del .bak sanitizado)."""
+    default de `scripts/restore_mssql.sh` (basename del .bak/.tar sanitizado)."""
     db = os.getenv("MSSQL_DATABASE", "").strip()
     if db:
         return db
-    stem = bak_name[:-4] if bak_name.lower().endswith(".bak") else bak_name
+    stem = bak_name
+    for sfx in (*TAR_SUFFIXES, ".bak"):
+        if stem.lower().endswith(sfx):
+            stem = stem[: -len(sfx)]
+            break
     return "".join(c if (c.isalnum() or c == "_") else "_" for c in stem)
 
 
@@ -173,19 +186,39 @@ def bak_watch_restore() -> str:
         logger.info(msg)
         print(msg, flush=True)
         return "skipped: sin .bak nuevo"
-    # .bak nuevo (nombre, tamaño, mtime o DB destino distintos de la marca).
+    # .bak / .tar nuevo (nombre, tamaño, mtime o DB destino distintos de la marca).
     backup_dir = ROOT / "mssql-backup"
     backup_dir.mkdir(exist_ok=True)
-    dest = backup_dir / src.name
-    if dest.exists() and os.path.samefile(src, dest):
-        msg = f"bak-watch-restore: {src.name} ya está en ./mssql-backup/, sin copia"
-        logger.info(msg)
-        print(msg, flush=True)
+    if _is_tar_archive(src.name):
+        with tarfile.open(src, "r:*") as tf:
+            bak_members = [m for m in tf.getmembers() if m.isfile() and m.name.lower().endswith(".bak")]
+            if not bak_members:
+                raise RuntimeError(f"bak-watch-restore: el archivo {src} no contiene ningún .bak")
+            member = bak_members[0]
+            dest = backup_dir / Path(member.name).name
+            msg = f"bak-watch-restore: descomprimiendo {src} ({member.name}) -> {dest}"
+            logger.info(msg)
+            print(msg, flush=True)
+            src_f = tf.extractfile(member)
+            if src_f is None:
+                raise RuntimeError(f"bak-watch-restore: no se pudo leer {member.name} de {src}")
+            with src_f, open(dest, "wb") as out_f:
+                shutil.copyfileobj(src_f, out_f)
+        os.chmod(dest, 0o644)
+        target = _resolve_restore_target(dest.name)
+        current["db"] = target
     else:
-        shutil.copy2(src, dest)
-        msg = f"bak-watch-restore: copiado {src} -> {dest} ({size2} B)"
-        logger.info(msg)
-        print(msg, flush=True)
+        dest = backup_dir / src.name
+        if dest.exists() and os.path.samefile(src, dest):
+            msg = f"bak-watch-restore: {src.name} ya está en ./mssql-backup/, sin copia"
+            logger.info(msg)
+            print(msg, flush=True)
+        else:
+            shutil.copy2(src, dest)
+            os.chmod(dest, 0o644)
+            msg = f"bak-watch-restore: copiado {src} -> {dest} ({size2} B)"
+            logger.info(msg)
+            print(msg, flush=True)
     cmd = ["bash", "scripts/restore_mssql.sh", dest.name]
     if os.getenv("MSSQL_DATABASE", "").strip():
         cmd += [target]
