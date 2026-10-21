@@ -59,7 +59,10 @@ services:
       start_period: 10s
 
   garage:
-    image: dxflrs/garage:v2.4.1
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.garage
+    image: dulse-garage:v2.4.1
     container_name: dulse-garage
     restart: unless-stopped
     entrypoint: ["/garage"]
@@ -76,7 +79,6 @@ services:
     volumes:
       - garage-meta:/var/lib/garage/meta
       - garage-data:/var/lib/garage/data
-      - ./docker/garage.toml:/etc/garage.toml:ro
     healthcheck:
       test: ["CMD", "/garage", "status"]
       interval: 10s

@@ -1,0 +1,6 @@
+# Empaqueta garage.toml dentro de la imagen para evitar que Portainer / Docker
+# cree /etc/garage.toml como un directorio vacío (os error 21: Is a directory)
+# cuando el stack se despliega desde un contenedor de Portainer.
+FROM dxflrs/garage:v2.4.1
+
+COPY docker/garage.toml /etc/garage.toml
