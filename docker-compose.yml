@@ -1,21 +1,10 @@
 # PoC Data Lake — lakehouse-infra (OpenSpec `poc-data-lake-ducklake`, tareas 2.1–2.3)
 #
-# Stack 100% local: postgres-catalog (catálogo DuckLake), postgres-source
-# (origen simulado, workstream 3), Garage nodo único (S3 compatible),
-# prefect-server (orquestación, workstream 6).
+# Stack 100% local / Portainer: postgres-catalog (catálogo DuckLake), postgres-source
+# (origen simulado), Garage nodo único (S3 compatible), prefect-server (orquestación),
+# mssql (SQL Server), lake-init (auto-setup) y lake-api (FastAPI + FastMCP).
 #
-# Uso:
-#   cp .env.example .env   # opcional, hay defaults locales
-#   docker compose up -d
-#   ./scripts/bootstrap.sh
-#   python3 scripts/smoke_ducklake.py
-#
-# Versiones fijadas (ver scripts/README.md para rationale y cómo actualizar):
-#   postgres:17.6-bookworm, dxflrs/garage:v2.4.1,
-#   prefecthq/prefect:3.6.22-python3.12, duckdb==1.4.4 (scripts/requirements-smoke.txt)
-#   mcr.microsoft.com/mssql/server:2022-CU27-ubuntu-22.04 (OpenSpec mssql-bak-source, tarea 1.2:
-#     CU27 = 16.0.4295.3, vigente a sep-2026; verificado que el tag existe en MCR.
-#     Si el .bak real requiere versión mayor, subir el CU/imagen.)
+# Todos los puertos y hosts están parametrizados por variables de entorno (ver .env / .env.example).
 
 services:
   postgres-catalog:
@@ -28,11 +17,11 @@ services:
       POSTGRES_PASSWORD: ${CATALOG_PASSWORD:-ducklake}
       PGDATA: /var/lib/postgresql/data/pgdata
     ports:
-      - "${CATALOG_PORT:-5433}:5432"
+      - "${CATALOG_PORT:-5433}:${CATALOG_INTERNAL_PORT:-5432}"
     volumes:
       - pgcatalog-data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      test: ["CMD-SHELL", "pg_isready -p ${CATALOG_INTERNAL_PORT:-5432} -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
       interval: 5s
       timeout: 5s
       retries: 10
@@ -48,11 +37,11 @@ services:
       POSTGRES_PASSWORD: ${SOURCE_PASSWORD:-source_password}
       PGDATA: /var/lib/postgresql/data/pgdata
     ports:
-      - "${SOURCE_PORT:-5434}:5432"
+      - "${SOURCE_PORT:-5434}:${SOURCE_INTERNAL_PORT:-5432}"
     volumes:
       - pgsource-data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      test: ["CMD-SHELL", "pg_isready -p ${SOURCE_INTERNAL_PORT:-5432} -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
       interval: 5s
       timeout: 5s
       retries: 10
@@ -73,9 +62,9 @@ services:
       GARAGE_DEFAULT_BUCKET: ${LAKEHOUSE_BUCKET:-lakehouse}
     ports:
       - "${GARAGE_S3_PORT:-3900}:3900"     # S3 API
-      - "${GARAGE_RPC_PORT:-3901}:3901"     # RPC interno
-      - "${GARAGE_WEB_PORT:-3902}:3902"     # hosting estático
-      - "${GARAGE_ADMIN_PORT:-3903}:3903"   # admin API
+      - "${GARAGE_RPC_PORT:-3901}:3901"    # RPC interno
+      - "${GARAGE_WEB_PORT:-3902}:3902"    # hosting estático
+      - "${GARAGE_ADMIN_PORT:-3903}:3903"  # admin API
     volumes:
       - garage-meta:/var/lib/garage/meta
       - garage-data:/var/lib/garage/data
@@ -91,25 +80,22 @@ services:
     container_name: dulse-prefect-server
     restart: unless-stopped
     entrypoint: ["prefect"]
-    command: ["server", "start", "--host", "0.0.0.0"]
+    command: ["server", "start", "--host", "${PREFECT_BIND_HOST:-0.0.0.0}", "--port", "${PREFECT_INTERNAL_PORT:-4200}"]
     ports:
-      - "${PREFECT_PORT:-4200}:4200"
+      - "${PREFECT_PORT:-4200}:${PREFECT_INTERNAL_PORT:-4200}"
     volumes:
       - prefect-data:/root/.prefect
     environment:
-      PREFECT_SERVER_API_HOST: "0.0.0.0"
+      PREFECT_SERVER_API_HOST: "${PREFECT_BIND_HOST:-0.0.0.0}"
+      PREFECT_SERVER_API_PORT: "${PREFECT_INTERNAL_PORT:-4200}"
       PREFECT_UI_ENABLED: "true"
     healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:4200/api/health', timeout=5).status in (200, 204) else 1)"]
+      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:${PREFECT_INTERNAL_PORT:-4200}/api/health', timeout=5).status in (200, 204) else 1)"]
       interval: 10s
       timeout: 10s
       retries: 18
       start_period: 30s
 
-  # OpenSpec mssql-bak-source, tarea 2.1. Fuente MSSQL del operador (.bak diario).
-  # No toca los servicios existentes. Requiere MSSQL_SA_PASSWORD en .env
-  # (falla explícito si vacía); el .bak se coloca en ./mssql-backup/ (gitignored).
-  # MSSQL pide >=2GB RAM; ver design/riesgos si el host no da.
   mssql:
     build:
       context: .
@@ -122,11 +108,11 @@ services:
       MSSQL_PID: Developer
       MSSQL_SA_PASSWORD: "${MSSQL_SA_PASSWORD:-Str0ng!PoC-Local01}"
     ports:
-      - "${MSSQL_PORT:-1433}:1433"
+      - "${MSSQL_PORT:-1433}:${MSSQL_INTERNAL_PORT:-1433}"
     volumes:
       - ./mssql-backup:/var/opt/mssql/backup
     healthcheck:
-      test: ["CMD-SHELL", "/opt/mssql-tools18/bin/sqlcmd -S localhost -U sa -P \"$$MSSQL_SA_PASSWORD\" -Q \"SELECT 1\" -C -l 5 > /dev/null 2>&1"]
+      test: ["CMD-SHELL", "/opt/mssql-tools18/bin/sqlcmd -S localhost,${MSSQL_INTERNAL_PORT:-1433} -U ${MSSQL_USER:-sa} -P \"$$MSSQL_SA_PASSWORD\" -Q \"SELECT 1\" -C -l 5 > /dev/null 2>&1"]
       interval: 10s
       timeout: 10s
       retries: 18
@@ -141,26 +127,27 @@ services:
     restart: "no"
     command: ["bash", "scripts/container_init.sh"]
     environment:
-      CATALOG_HOST: postgres-catalog
-      CATALOG_PORT: "5432"
+      CATALOG_HOST: ${DOCKER_CATALOG_HOST:-postgres-catalog}
+      CATALOG_PORT: "${CATALOG_INTERNAL_PORT:-5432}"
       CATALOG_DB: ${CATALOG_DB:-ducklake_catalog}
       CATALOG_USER: ${CATALOG_USER:-ducklake}
       CATALOG_PASSWORD: ${CATALOG_PASSWORD:-ducklake}
-      SOURCE_HOST: postgres-source
-      SOURCE_PORT: "5432"
+      SOURCE_HOST: ${DOCKER_SOURCE_HOST:-postgres-source}
+      SOURCE_PORT: "${SOURCE_INTERNAL_PORT:-5432}"
       SOURCE_DB: ${SOURCE_DB:-source_db}
       SOURCE_USER: ${SOURCE_USER:-source_user}
       SOURCE_PASSWORD: ${SOURCE_PASSWORD:-source_password}
-      GARAGE_S3_ENDPOINT: http://garage:3900
-      GARAGE_S3_HOST: garage:3900
+      GARAGE_S3_ENDPOINT: ${DOCKER_GARAGE_S3_ENDPOINT:-http://${DOCKER_GARAGE_HOST:-garage}:${GARAGE_S3_PORT:-3900}}
+      GARAGE_S3_HOST: ${DOCKER_GARAGE_S3_HOST:-${DOCKER_GARAGE_HOST:-garage}:${GARAGE_S3_PORT:-3900}}
       GARAGE_S3_KEY_ID: ${GARAGE_S3_KEY_ID:-GK0123456789abcdef0123456789abcdef}
       GARAGE_S3_SECRET: ${GARAGE_S3_SECRET:-0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef}
       GARAGE_S3_REGION: ${GARAGE_S3_REGION:-garage}
       DUCKLAKE_DATA_PATH: ${DUCKLAKE_DATA_PATH:-s3://lakehouse/data/}
-      MSSQL_HOST: mssql
-      MSSQL_PORT: "1433"
+      MSSQL_HOST: ${DOCKER_MSSQL_HOST:-mssql}
+      MSSQL_PORT: "${MSSQL_INTERNAL_PORT:-1433}"
+      MSSQL_USER: ${MSSQL_USER:-sa}
       MSSQL_SA_PASSWORD: "${MSSQL_SA_PASSWORD:-Str0ng!PoC-Local01}"
-      PREFECT_API_URL: http://prefect-server:4200/api
+      PREFECT_API_URL: ${DOCKER_PREFECT_API_URL:-http://${DOCKER_PREFECT_HOST:-prefect-server}:${PREFECT_INTERNAL_PORT:-4200}/api}
       SEED_SCALE: ${SEED_SCALE:-demo}
     volumes:
       - ./mssql-backup:/workspace/mssql-backup
@@ -183,14 +170,16 @@ services:
     container_name: dulse-lake-api
     restart: unless-stopped
     ports:
-      - "${API_PORT:-8000}:8000"
+      - "${API_PORT:-8000}:${API_INTERNAL_PORT:-8000}"
     environment:
-      CATALOG_HOST: postgres-catalog
-      CATALOG_PORT: "5432"
+      API_BIND_HOST: ${API_BIND_HOST:-0.0.0.0}
+      API_INTERNAL_PORT: "${API_INTERNAL_PORT:-8000}"
+      CATALOG_HOST: ${DOCKER_CATALOG_HOST:-postgres-catalog}
+      CATALOG_PORT: "${CATALOG_INTERNAL_PORT:-5432}"
       CATALOG_DB: ${CATALOG_DB:-ducklake_catalog}
       CATALOG_USER: ${CATALOG_USER:-ducklake}
       CATALOG_PASSWORD: ${CATALOG_PASSWORD:-ducklake}
-      GARAGE_S3_ENDPOINT: http://garage:3900
+      GARAGE_S3_ENDPOINT: ${DOCKER_GARAGE_S3_ENDPOINT:-http://${DOCKER_GARAGE_HOST:-garage}:${GARAGE_S3_PORT:-3900}}
       GARAGE_S3_KEY_ID: ${GARAGE_S3_KEY_ID:-GK0123456789abcdef0123456789abcdef}
       GARAGE_S3_SECRET: ${GARAGE_S3_SECRET:-0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef}
       GARAGE_S3_REGION: ${GARAGE_S3_REGION:-garage}
@@ -201,7 +190,7 @@ services:
       garage:
         condition: service_healthy
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      test: ["CMD-SHELL", "curl -f http://localhost:${API_INTERNAL_PORT:-8000}/health"]
       interval: 10s
       timeout: 5s
       retries: 6

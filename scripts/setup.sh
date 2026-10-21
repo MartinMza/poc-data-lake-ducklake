@@ -146,11 +146,14 @@ set -a
 source .env
 set +a
 
+SOURCE_HOST="${SOURCE_HOST:-localhost}"
 SOURCE_USER="${SOURCE_USER:-source_user}"
 SOURCE_PASSWORD="${SOURCE_PASSWORD:-source_password}"
 SOURCE_DB="${SOURCE_DB:-source_db}"
 SOURCE_PORT="${SOURCE_PORT:-5434}"
-SOURCE_DSN="postgresql://${SOURCE_USER}:${SOURCE_PASSWORD}@localhost:${SOURCE_PORT}/${SOURCE_DB}"
+SOURCE_DSN="postgresql://${SOURCE_USER}:${SOURCE_PASSWORD}@${SOURCE_HOST}:${SOURCE_PORT}/${SOURCE_DB}"
+API_HOST="${API_HOST:-localhost}"
+API_PORT="${API_PORT:-8000}"
 
 # 2. Infraestructura Docker
 echo ""
@@ -315,6 +318,6 @@ echo "  Setup Inicial Completado con Éxito"
 echo "================================================================="
 echo "  Carpeta de backups MSSQL:  ./mssql-backup/"
 echo "  Para iniciar la API/MCP:   ./scripts/run_api.sh"
-echo "  Swagger UI (API REST):     http://localhost:8000/docs"
-echo "  MCP Server (SSE):          http://localhost:8000/mcp/sse"
+echo "  Swagger UI (API REST):     http://${API_HOST}:${API_PORT}/docs"
+echo "  MCP Server (SSE):          http://${API_HOST}:${API_PORT}/mcp/sse"
 echo "================================================================="

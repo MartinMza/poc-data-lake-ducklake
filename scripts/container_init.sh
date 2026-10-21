@@ -182,5 +182,5 @@ echo "  Conteo Final de Tablas en el Data Lake"
 echo "================================================================="
 /workspace/bronze/.venv/bin/python scripts/lake_counts.py
 echo "================================================================="
-echo "  Auto-Init finalizado con éxito. API/MCP lista en puerto 8000."
+echo "  Auto-Init finalizado con éxito. API/MCP lista en puerto ${API_PORT:-8000}."
 echo "================================================================="

@@ -27,11 +27,16 @@ if [[ -f .env ]]; then
   source .env
 fi
 
+CATALOG_HOST="${CATALOG_HOST:-localhost}"
 CATALOG_DB="${CATALOG_DB:-ducklake_catalog}"
 CATALOG_USER="${CATALOG_USER:-ducklake}"
 CATALOG_PORT="${CATALOG_PORT:-5433}"
 LAKEHOUSE_BUCKET="${LAKEHOUSE_BUCKET:-lakehouse}"
+GARAGE_HOST="${GARAGE_HOST:-localhost}"
+GARAGE_S3_PORT="${GARAGE_S3_PORT:-3900}"
+GARAGE_S3_ENDPOINT="${GARAGE_S3_ENDPOINT:-http://${GARAGE_HOST}:${GARAGE_S3_PORT}}"
 GARAGE_S3_KEY_ID="${GARAGE_S3_KEY_ID:-GK0123456789abcdef0123456789abcdef}"
+PREFECT_HOST="${PREFECT_HOST:-localhost}"
 PREFECT_PORT="${PREFECT_PORT:-4200}"
 
 COMPOSE=(docker compose)
@@ -90,17 +95,17 @@ fi
 if [[ "$SKIP_PREFECT_CHECK" == "false" ]]; then
   echo "==> [extra] prefect-server (informativo, no bloquea) ..."
   if curl -sf -o /dev/null --max-time 5 \
-      "http://localhost:${PREFECT_PORT}/api/health"; then
-    echo "    prefect-server healthy en :${PREFECT_PORT}"
+      "http://${PREFECT_HOST}:${PREFECT_PORT}/api/health"; then
+    echo "    prefect-server healthy en ${PREFECT_HOST}:${PREFECT_PORT}"
   else
-    echo "    aviso: prefect-server aún no responde en :${PREFECT_PORT}" >&2
+    echo "    aviso: prefect-server aún no responde en ${PREFECT_HOST}:${PREFECT_PORT}" >&2
   fi
 fi
 
 cat <<EOF
 ==> bootstrap OK (re-ejecutable sin duplicados)
-    catalog : postgres://$CATALOG_USER@localhost:$CATALOG_PORT/$CATALOG_DB
-    bucket  : s3://$LAKEHOUSE_BUCKET/ (endpoint http://localhost:3900)
+    catalog : postgres://$CATALOG_USER@$CATALOG_HOST:$CATALOG_PORT/$CATALOG_DB
+    bucket  : s3://$LAKEHOUSE_BUCKET/ (endpoint $GARAGE_S3_ENDPOINT)
     s3 key  : $GARAGE_S3_KEY_ID (secret en GARAGE_S3_SECRET del entorno/compose)
     siguiente: python3 scripts/smoke_ducklake.py
 EOF

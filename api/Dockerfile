@@ -31,7 +31,9 @@ RUN python -c "import duckdb; con = duckdb.connect(); con.execute('INSTALL duckl
 
 COPY api /app/api
 
-ENV PYTHONUNBUFFERED=1
+ENV PYTHONUNBUFFERED=1 \
+    API_BIND_HOST=0.0.0.0 \
+    API_INTERNAL_PORT=8000
 EXPOSE 8000
 
-CMD ["uvicorn", "api.main:app", "--host", "0.0.0.0", "--port", "8000"]
+CMD ["sh", "-c", "exec uvicorn api.main:app --host ${API_BIND_HOST:-0.0.0.0} --port ${API_INTERNAL_PORT:-8000}"]
