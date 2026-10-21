@@ -118,7 +118,7 @@ services:
     environment:
       ACCEPT_EULA: "Y"
       MSSQL_PID: Developer
-      MSSQL_SA_PASSWORD: "${MSSQL_SA_PASSWORD:?MSSQL_SA_PASSWORD vacia - definila en .env (ver .env.example)}"
+      MSSQL_SA_PASSWORD: "${MSSQL_SA_PASSWORD:-Str0ng!PoC-Local01}"
     ports:
       - "${MSSQL_PORT:-1433}:1433"
     volumes:
@@ -130,13 +130,14 @@ services:
       retries: 18
       start_period: 30s
 
-  lake-pipeline:
+  lake-init:
     build:
       context: .
       dockerfile: docker/Dockerfile.pipeline
     image: dulse-lake-pipeline:latest
-    container_name: dulse-lake-pipeline
-    profiles: ["pipeline"]
+    container_name: dulse-lake-init
+    restart: "no"
+    command: ["bash", "scripts/container_init.sh"]
     environment:
       CATALOG_HOST: postgres-catalog
       CATALOG_PORT: "5432"
@@ -149,14 +150,16 @@ services:
       SOURCE_USER: ${SOURCE_USER:-source_user}
       SOURCE_PASSWORD: ${SOURCE_PASSWORD:-source_password}
       GARAGE_S3_ENDPOINT: http://garage:3900
+      GARAGE_S3_HOST: garage:3900
       GARAGE_S3_KEY_ID: ${GARAGE_S3_KEY_ID:-GK0123456789abcdef0123456789abcdef}
       GARAGE_S3_SECRET: ${GARAGE_S3_SECRET:-0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef}
       GARAGE_S3_REGION: ${GARAGE_S3_REGION:-garage}
       DUCKLAKE_DATA_PATH: ${DUCKLAKE_DATA_PATH:-s3://lakehouse/data/}
       MSSQL_HOST: mssql
       MSSQL_PORT: "1433"
-      MSSQL_SA_PASSWORD: ${MSSQL_SA_PASSWORD:-}
+      MSSQL_SA_PASSWORD: "${MSSQL_SA_PASSWORD:-Str0ng!PoC-Local01}"
       PREFECT_API_URL: http://prefect-server:4200/api
+      SEED_SCALE: ${SEED_SCALE:-demo}
     volumes:
       - ./mssql-backup:/workspace/mssql-backup
       - ./mssql-fast:/workspace/mssql-fast
@@ -164,7 +167,11 @@ services:
     depends_on:
       postgres-catalog:
         condition: service_healthy
+      postgres-source:
+        condition: service_healthy
       garage:
+        condition: service_healthy
+      mssql:
         condition: service_healthy
 
   lake-api:

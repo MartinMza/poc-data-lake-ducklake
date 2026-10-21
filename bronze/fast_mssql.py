@@ -142,17 +142,33 @@ def export_settings(args) -> tuple[int | None, str, int]:
     return window_days, args.cutoff, parallel
 
 
+def _local_bcp() -> str | None:
+    import shutil
+    for candidate in ("/opt/mssql-tools18/bin/bcp", shutil.which("bcp")):
+        if candidate and os.path.isfile(candidate) and os.access(candidate, os.X_OK):
+            return candidate
+    return None
+
+
 def export_one(table: str, window_days: int | None, cutoff: str,
                host: str, user: str, pw: str, workdir: str) -> float:
     q = build_query_raw(table, window_days, cutoff or "")
     t0 = time.time()
-    sh("docker", "compose", "exec", "-T", "mssql",
-       "/opt/mssql-tools18/bin/bcp", q, "queryout",
-       f"/tmp/fast_mssql/{table}.tsv",
-       "-S", host, "-U", user, "-P", pw,
-       "-u", "-C", "65001", "-c", "-t", "\t")
-    sh("docker", "compose", "cp", f"mssql:/tmp/fast_mssql/{table}.tsv",
-       f"{workdir}/{table}.tsv")
+    bcp_bin = _local_bcp()
+    port = os.getenv("MSSQL_PORT", "1433")
+    if bcp_bin:
+        sh(bcp_bin, q, "queryout",
+           f"{workdir}/{table}.tsv",
+           "-S", f"{host},{port}", "-U", user, "-P", pw,
+           "-u", "-C", "65001", "-c", "-t", "\t")
+    else:
+        sh("docker", "compose", "exec", "-T", "mssql",
+           "/opt/mssql-tools18/bin/bcp", q, "queryout",
+           f"/tmp/fast_mssql/{table}.tsv",
+           "-S", "localhost", "-U", user, "-P", pw,
+           "-u", "-C", "65001", "-c", "-t", "\t")
+        sh("docker", "compose", "cp", f"mssql:/tmp/fast_mssql/{table}.tsv",
+           f"{workdir}/{table}.tsv")
     dt = time.time() - t0
     mode = "FULL" if (window_days is None or table not in TABLE_WINDOW_COL) else f"WIN{window_days}d"
     print(f"export {table} [{mode}]: {dt:.1f}s", flush=True)
@@ -169,7 +185,8 @@ def cmd_export(args) -> int:
     pw = mssql_pw()
     window_days, cutoff, parallel = export_settings(args)
 
-    sh("docker", "compose", "exec", "-T", "mssql", "mkdir", "-p", "/tmp/fast_mssql")
+    if not _local_bcp():
+        sh("docker", "compose", "exec", "-T", "mssql", "mkdir", "-p", "/tmp/fast_mssql")
     timings: dict[str, float] = {}
 
     def one(table: str) -> str:
