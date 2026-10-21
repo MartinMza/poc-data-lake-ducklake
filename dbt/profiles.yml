@@ -30,7 +30,7 @@ dulse:
         - type: s3
           key_id: "{{ env_var('GARAGE_S3_KEY_ID', 'GK0123456789abcdef0123456789abcdef') }}"
           secret: "{{ env_var('GARAGE_S3_SECRET', '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef') }}"
-          endpoint: "{{ env_var('GARAGE_S3_HOST', 'localhost:3900') }}"
+          endpoint: "{{ env_var('GARAGE_HOST', 'localhost') }}:{{ env_var('GARAGE_S3_PORT', '3900') }}"
           url_style: "path"
           use_ssl: false
           region: "{{ env_var('GARAGE_S3_REGION', 'garage') }}"

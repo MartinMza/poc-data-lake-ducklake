@@ -24,11 +24,10 @@ SOURCE_PORT="${SOURCE_PORT:-5432}"
 SOURCE_DB="${SOURCE_DB:-source_db}"
 SOURCE_USER="${SOURCE_USER:-source_user}"
 SOURCE_PASSWORD="${SOURCE_PASSWORD:-source_password}"
-SOURCE_DSN="postgresql://${SOURCE_USER}:${SOURCE_PASSWORD}@${SOURCE_HOST}:${SOURCE_PORT}/${SOURCE_DB}"
 
-GARAGE_S3_ENDPOINT="${GARAGE_S3_ENDPOINT:-http://garage:3900}"
-export GARAGE_S3_HOST="${GARAGE_S3_ENDPOINT#http://}"
-export GARAGE_S3_HOST="${GARAGE_S3_HOST#https://}"
+export GARAGE_SCHEME="${GARAGE_SCHEME:-http}"
+export GARAGE_HOST="${GARAGE_HOST:-garage}"
+export GARAGE_S3_PORT="${GARAGE_S3_PORT:-3900}"
 
 MSSQL_HOST="${MSSQL_HOST:-mssql}"
 MSSQL_PORT="${MSSQL_PORT:-1433}"
@@ -74,7 +73,7 @@ fi
 
 if [[ "$ROW_COUNT" == "0" ]]; then
   echo "    Generando datos sintéticos en postgres-source (escala: $SEED_SCALE)..."
-  SOURCE_DSN="$SOURCE_DSN" /workspace/bronze/.venv/bin/python source/generate.py --mode seed --scale "$SEED_SCALE" --out postgres
+  /workspace/bronze/.venv/bin/python source/generate.py --mode seed --scale "$SEED_SCALE" --out postgres
 else
   echo "    postgres-source ya cuenta con datos ($ROW_COUNT clientes)."
 fi

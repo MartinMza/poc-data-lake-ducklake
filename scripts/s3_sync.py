@@ -27,6 +27,9 @@ import sys
 def _fs():
     import s3fs  # del venv bronze (dlt[s3]); no es dep nueva
 
+    garage_scheme = os.getenv("GARAGE_SCHEME", "http")
+    garage_host = os.getenv("GARAGE_HOST", "localhost")
+    garage_port = os.getenv("GARAGE_S3_PORT", "3900")
     return s3fs.S3FileSystem(
         key=os.getenv(
             "GARAGE_S3_KEY_ID", "GK0123456789abcdef0123456789abcdef"
@@ -38,7 +41,7 @@ def _fs():
         ),
         client_kwargs={
             "endpoint_url": os.getenv(
-                "GARAGE_S3_ENDPOINT", "http://localhost:3900"
+                "GARAGE_S3_ENDPOINT", f"{garage_scheme}://{garage_host}:{garage_port}"
             ),
             "region_name": os.getenv("GARAGE_S3_REGION", "garage"),
         },

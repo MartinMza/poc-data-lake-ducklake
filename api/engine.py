@@ -45,7 +45,9 @@ def get_connection() -> duckdb.DuckDBPyConnection:
             f"user={_env('CATALOG_USER', 'ducklake')} "
             f"password={_env('CATALOG_PASSWORD', 'ducklake')}"
         )
-        endpoint = _env("GARAGE_S3_ENDPOINT", "http://localhost:3900")
+        garage_host = _env("GARAGE_HOST", "localhost")
+        garage_port = _env("GARAGE_S3_PORT", "3900")
+        endpoint = _env("GARAGE_S3_ENDPOINT", f"{garage_host}:{garage_port}")
         endpoint_host = endpoint.removeprefix("http://").removeprefix("https://")
 
         con = duckdb.connect()

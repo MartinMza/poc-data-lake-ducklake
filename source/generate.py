@@ -309,6 +309,18 @@ def report_cursor(con: sqlite3.Connection, since: str) -> None:
 
 # --------------------------------------------------------------------------
 
+def _default_postgres_dsn() -> str:
+    dsn = os.getenv("SOURCE_DSN", "")
+    if dsn:
+        return dsn
+    host = os.getenv("SOURCE_HOST", "localhost")
+    port = os.getenv("SOURCE_PORT", "5434")
+    user = os.getenv("SOURCE_USER", "source_user")
+    password = os.getenv("SOURCE_PASSWORD", "source_password")
+    db = os.getenv("SOURCE_DB", "source_db")
+    return f"postgresql://{user}:{password}@{host}:{port}/{db}"
+
+
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     ap = argparse.ArgumentParser(description="Generador sintético de postgres-source")
     ap.add_argument("--mode", choices=("seed", "update"), default="seed")
@@ -318,8 +330,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
                     help="perfil nominal (default: demo salvo que --rows indique)")
     ap.add_argument("--seed", type=int, default=42, help="semilla RNG (repetible)")
     ap.add_argument("--out", choices=("postgres", "csv", "sqlite"), default="sqlite")
-    ap.add_argument("--dsn", default=os.getenv("SOURCE_DSN", ""),
-                    help="DSN postgres (o env SOURCE_DSN)")
+    ap.add_argument("--dsn", default=_default_postgres_dsn(),
+                    help="DSN postgres (o env SOURCE_HOST/SOURCE_PORT/SOURCE_USER/SOURCE_PASSWORD/SOURCE_DB)")
     ap.add_argument("--out-dir", default="source/_data",
                     help="destino CSV (solo --out csv)")
     ap.add_argument("--sqlite-file", default="source/_data/source.db",

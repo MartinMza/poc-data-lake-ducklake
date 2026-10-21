@@ -41,6 +41,9 @@ TABLES = ("customers", "units", "leases", "payments")
 def bucket_bytes(prefix: str) -> int:
     import s3fs
 
+    garage_scheme = os.getenv("GARAGE_SCHEME", "http")
+    garage_host = os.getenv("GARAGE_HOST", "localhost")
+    garage_port = os.getenv("GARAGE_S3_PORT", "3900")
     fs = s3fs.S3FileSystem(
         key=os.getenv("GARAGE_S3_KEY_ID",
                       "GK0123456789abcdef0123456789abcdef"),
@@ -49,7 +52,7 @@ def bucket_bytes(prefix: str) -> int:
                          "0123456789abcdef0123456789abcdef"),
         client_kwargs={
             "endpoint_url": os.getenv("GARAGE_S3_ENDPOINT",
-                                      "http://localhost:3900"),
+                                      f"{garage_scheme}://{garage_host}:{garage_port}"),
             "region_name": os.getenv("GARAGE_S3_REGION", "garage")},
         config_kwargs={"s3": {"addressing_style": "path"}},
     )

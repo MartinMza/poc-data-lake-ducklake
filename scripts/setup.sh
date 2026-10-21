@@ -151,7 +151,6 @@ SOURCE_USER="${SOURCE_USER:-source_user}"
 SOURCE_PASSWORD="${SOURCE_PASSWORD:-source_password}"
 SOURCE_DB="${SOURCE_DB:-source_db}"
 SOURCE_PORT="${SOURCE_PORT:-5434}"
-SOURCE_DSN="postgresql://${SOURCE_USER}:${SOURCE_PASSWORD}@${SOURCE_HOST}:${SOURCE_PORT}/${SOURCE_DB}"
 API_HOST="${API_HOST:-localhost}"
 API_PORT="${API_PORT:-8000}"
 
@@ -203,7 +202,7 @@ fi
 
 if [[ "$FORCE_SEED" == "true" || "$ROW_COUNT" == "0" ]]; then
   echo "    Cargando datos sintéticos en postgres-source (escala: $SCALE)..."
-  SOURCE_DSN="$SOURCE_DSN" bronze/.venv/bin/python source/generate.py --mode seed --scale "$SCALE" --out postgres
+  bronze/.venv/bin/python source/generate.py --mode seed --scale "$SCALE" --out postgres
 else
   echo "    postgres-source ya cuenta con datos ($ROW_COUNT clientes). Usa --force-seed para regenerar."
 fi

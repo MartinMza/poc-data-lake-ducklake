@@ -29,7 +29,9 @@ S3_SECRET = os.getenv(
     "GARAGE_S3_SECRET",
     "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
 )
-S3_ENDPOINT = os.getenv("GARAGE_S3_ENDPOINT", "http://localhost:3900")
+S3_HOST = os.getenv("GARAGE_HOST", "localhost")
+S3_PORT = os.getenv("GARAGE_S3_PORT", "3900")
+S3_ENDPOINT = os.getenv("GARAGE_S3_ENDPOINT", f"{S3_HOST}:{S3_PORT}")
 S3_REGION = os.getenv("GARAGE_S3_REGION", "garage")
 DATA_PATH = os.getenv("DUCKLAKE_DATA_PATH", "s3://lakehouse/data/")
 
@@ -47,10 +49,15 @@ def main() -> int:
                     k, v = line.split("=", 1)
                     os.environ.setdefault(k.strip(), v.strip())
         # Releer por si .env definia valores (los ya fijados arriba quedan).
-        global CATALOG_DB, CATALOG_USER, CATALOG_PASSWORD  # noqa: PLW0603
+        global CATALOG_DB, CATALOG_USER, CATALOG_PASSWORD, CATALOG_HOST, CATALOG_PORT, S3_HOST, S3_PORT, S3_ENDPOINT  # noqa: PLW0603
         CATALOG_DB = os.getenv("CATALOG_DB", CATALOG_DB)
         CATALOG_USER = os.getenv("CATALOG_USER", CATALOG_USER)
         CATALOG_PASSWORD = os.getenv("CATALOG_PASSWORD", CATALOG_PASSWORD)
+        CATALOG_HOST = os.getenv("CATALOG_HOST", CATALOG_HOST)
+        CATALOG_PORT = os.getenv("CATALOG_PORT", CATALOG_PORT)
+        S3_HOST = os.getenv("GARAGE_HOST", S3_HOST)
+        S3_PORT = os.getenv("GARAGE_S3_PORT", S3_PORT)
+        S3_ENDPOINT = os.getenv("GARAGE_S3_ENDPOINT", f"{S3_HOST}:{S3_PORT}")
 
     try:
         import duckdb

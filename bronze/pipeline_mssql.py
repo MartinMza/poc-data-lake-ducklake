@@ -182,6 +182,9 @@ def build_urls() -> tuple[str, str, str, dict]:
     if not data_path.endswith("/"):
         data_path += "/"
 
+    garage_scheme = _env("GARAGE_SCHEME", "http")
+    garage_host = _env("GARAGE_HOST", "localhost")
+    garage_port = _env("GARAGE_S3_PORT", "3900")
     s3_creds = {
         "aws_access_key_id": _env(
             "GARAGE_S3_KEY_ID", "GK0123456789abcdef0123456789abcdef"
@@ -190,7 +193,9 @@ def build_urls() -> tuple[str, str, str, dict]:
             "GARAGE_S3_SECRET",
             "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
         ),
-        "endpoint_url": _env("GARAGE_S3_ENDPOINT", "http://localhost:3900"),
+        "endpoint_url": _env(
+            "GARAGE_S3_ENDPOINT", f"{garage_scheme}://{garage_host}:{garage_port}"
+        ),
         "region_name": _env("GARAGE_S3_REGION", "garage"),
         "s3_url_style": "path",
     }
