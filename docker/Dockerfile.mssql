@@ -1,0 +1,22 @@
+# Extiende la imagen oficial de SQL Server 2022 agregando utilidades de
+# descompresión (.tar, .tar.gz, .bz2, .xz, .zst, .zip, .7z, .lz4) y diagnóstico.
+FROM mcr.microsoft.com/mssql/server:2022-CU27-ubuntu-22.04
+
+USER root
+
+RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+    tar \
+    gzip \
+    pigz \
+    bzip2 \
+    xz-utils \
+    zstd \
+    lz4 \
+    unzip \
+    p7zip-full \
+    curl \
+    jq \
+    ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+USER mssql

@@ -109,7 +109,10 @@ services:
   # (falla explícito si vacía); el .bak se coloca en ./mssql-backup/ (gitignored).
   # MSSQL pide >=2GB RAM; ver design/riesgos si el host no da.
   mssql:
-    image: mcr.microsoft.com/mssql/server:2022-CU27-ubuntu-22.04
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.mssql
+    image: dulse-mssql:2022-CU27
     container_name: dulse-mssql
     restart: unless-stopped
     environment:
@@ -126,6 +129,43 @@ services:
       timeout: 10s
       retries: 18
       start_period: 30s
+
+  lake-pipeline:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.pipeline
+    image: dulse-lake-pipeline:latest
+    container_name: dulse-lake-pipeline
+    profiles: ["pipeline"]
+    environment:
+      CATALOG_HOST: postgres-catalog
+      CATALOG_PORT: "5432"
+      CATALOG_DB: ${CATALOG_DB:-ducklake_catalog}
+      CATALOG_USER: ${CATALOG_USER:-ducklake}
+      CATALOG_PASSWORD: ${CATALOG_PASSWORD:-ducklake}
+      SOURCE_HOST: postgres-source
+      SOURCE_PORT: "5432"
+      SOURCE_DB: ${SOURCE_DB:-source_db}
+      SOURCE_USER: ${SOURCE_USER:-source_user}
+      SOURCE_PASSWORD: ${SOURCE_PASSWORD:-source_password}
+      GARAGE_S3_ENDPOINT: http://garage:3900
+      GARAGE_S3_KEY_ID: ${GARAGE_S3_KEY_ID:-GK0123456789abcdef0123456789abcdef}
+      GARAGE_S3_SECRET: ${GARAGE_S3_SECRET:-0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef}
+      GARAGE_S3_REGION: ${GARAGE_S3_REGION:-garage}
+      DUCKLAKE_DATA_PATH: ${DUCKLAKE_DATA_PATH:-s3://lakehouse/data/}
+      MSSQL_HOST: mssql
+      MSSQL_PORT: "1433"
+      MSSQL_SA_PASSWORD: ${MSSQL_SA_PASSWORD:-}
+      PREFECT_API_URL: http://prefect-server:4200/api
+    volumes:
+      - ./mssql-backup:/workspace/mssql-backup
+      - ./mssql-fast:/workspace/mssql-fast
+      - ./backups:/workspace/backups
+    depends_on:
+      postgres-catalog:
+        condition: service_healthy
+      garage:
+        condition: service_healthy
 
   lake-api:
     build:
