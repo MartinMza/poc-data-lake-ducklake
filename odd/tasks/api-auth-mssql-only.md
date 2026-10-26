@@ -41,3 +41,38 @@ de SQL Server expuestas por la API/MCP.
 - **L3** (decisión alcance de borrado): "Datos + código sintético + tablas de prueba MSSQL"
 - **L4** (decisión dbt/KPIs): "Eliminar dbt del flujo: solo bronze MSSQL expuesto"
 - **L5** (decisión vista MCP): "Catálogo + tabla SQL Server dedicada"
+
+## Commits (work units)
+
+- `cefdbca` **C1 — auth**: `api/auth.py`, `api/config.py`, middleware ASGI global
+  (REST + `/mcp`), `POST /auth/token`, `api/test_auth.py` (14 tests), helper de
+  hash, env/compose del `lake-api`, preflight en `run_api.sh`.
+- `b72c0d6` **C2 — API/MCP solo MSSQL**: engine bronze-only +
+  `sqlserver_tables()`/`preview_rows()`, endpoints `/api/v1/sqlserver/*`, tools y
+  recursos MCP, `api/test_api_mcp.py` reescrito (16 tests), `purge_sample_data.py`.
+  Purga aplicada al lago (backup previo en `backups/pre-purge-20261026-175304`).
+- **C3 — limpieza de código/infra** (borra `source/`, `bronze/pipeline.py`, `dbt/`,
+  scripts de gold/benchmark, reconecta `orchestration/flow.py`,
+  `container_init.sh`, `setup.sh`, defaults MSSQL, compose sin `postgres-source`).
+- **C4 — documentación** (`README.md`, `api/README.md`, `bronze/README.md`,
+  `orchestration/README.md`, notas de vigencia en `docs/findings*.md`).
+
+## Estado de ejecución
+
+| Task | Estado | Evidencia |
+|---|---|---|
+| T1-T3 | hecho (C1) | `api/auth.py`, middleware global, `/auth/token`; curl contra uvicorn real: `/health` 200, `/api/v1/tables` 401, `/mcp/sse` 401, key válida 200, JWT 200 |
+| T4 | hecho (C1) | `api/test_auth.py` 14/14 |
+| T5-T7 | hecho (C2) | `api/test_api_mcp.py` 16/16; inventario devuelve las 7 tablas |
+| T8 | hecho (C2) | `purge_sample_data.py --apply` + re-run "Nada que purgar"; backup previo `backups/pre-purge-20261026-175304` |
+| T9-T11 | hecho (C3) | `source/`, `bronze/pipeline.py`, `dbt/`, `export_gold.py`, `benchmark.py`, `concurrency_check.py` borrados; `flow.py` = restore→ingesta; defaults MSSQL = 7 tablas y `FAF12_Kavos`; `bash -n` + `py_compile` + `flow --help` OK |
+| T12 | hecho (C3) | compose sin `postgres-source`/`SEED_SCALE`; `lake-init` sin seed; `lake-api` con `AUTH_*`; `docker compose config` OK |
+| T13 | hecho (C4) | README raíz, `api/README`, `bronze/README`, `orchestration/README`, `.env.example`, notas de vigencia en `docs/findings*.md` |
+| T14 | parcial | `pytest api/` 30/30, purga idempotente, auth por curl, `flow --help`; falta cerrar con la corrida del flow y el review nativo |
+
+Notas de ejecución:
+- La delegación al writer quedó bloqueada por el runtime (exige `Spec:` y luego
+  se colgó a los 4 min); el trabajo se completó inline, salvo los cambios de
+  `bronze/*.py` que el writer sí alcanzó a dejar y fueron revisados aquí.
+- Las bases de prueba de SQL Server (`RestoredProof`, `TestBakSource`) se
+  dropearon: en la instancia queda solo `FAF12_Kavos`.

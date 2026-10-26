@@ -1,5 +1,12 @@
 # Hallazgos PoC Data Lake (DuckLake + DuckDB) — decisión de avanzar o no
 
+> **Nota de vigencia (2026-10-26)**: este documento registra los hallazgos
+> históricos del PoC. Después de esas mediciones se retiró el
+> origen Postgres sintético y las capas dbt (`silver`/`gold`), y se agregó
+> autenticación a la API/MCP. El lago hoy contiene solo las 7 tablas reales
+> ingestadas desde SQL Server. Lo que sigue se conserva como evidencia de las
+> corridas originales.
+
 Fecha: 2026-10-08. Alcance: change `poc-data-lake-ducklake`, grupo 7
 (operación, benchmark y cierre). Datos 100% sintéticos, stack local.
 
