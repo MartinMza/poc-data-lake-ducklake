@@ -16,7 +16,10 @@ from api.mcp_server import mcp
 app = FastAPI(
     title="Dulse Data Lake API & MCP",
     version="1.0.0",
-    description="API REST y servidor MCP para consultar el DuckLake (capas bronze, silver, gold y Time Travel).",
+    description=(
+        "API REST y servidor MCP para consultar la data cargada desde SQL Server "
+        "en el DuckLake (esquema bronze, tablas mssql_*, con Time Travel)."
+    ),
 )
 
 # Fail-closed: sin credenciales configuradas el servicio no arranca.
@@ -54,7 +57,7 @@ class QueryRequest(BaseModel):
     sql: str = Field(
         ...,
         description="Consulta SQL de solo lectura (SELECT, WITH, DESCRIBE, EXPLAIN).",
-        examples=["SELECT * FROM lake.gold.gold_monthly_revenue LIMIT 5"],
+        examples=["SELECT * FROM lake.bronze.mssql_bs_transaccion LIMIT 5"],
     )
     limit: int = Field(
         default=100,
@@ -136,8 +139,8 @@ app.openapi = _custom_openapi
 @app.get("/api/v1/tables", tags=["Catálogo"])
 def list_lake_tables(
     schemas: str = Query(
-        default="bronze,silver,gold",
-        description="Esquemas separados por comas a incluir.",
+        default="bronze",
+        description="Esquemas separados por comas a incluir (el lago solo tiene bronze).",
     )
 ):
     """Lista las tablas del Data Lake con sus conteos de filas actuales."""
@@ -173,41 +176,41 @@ def describe_lake_table(schema: str, table: str):
         ) from exc
 
 
-@app.get("/api/v1/kpis/{kpi_name}", tags=["KPIs Curados"])
-def get_curated_kpi(
-    kpi_name: str,
-    currency: str | None = Query(
-        default=None, description="Moneda para filtrar (ej. USD, UYU)."
-    ),
-    limit: int = Query(
-        default=20, ge=1, le=500, description="Límite de registros para tops."
-    ),
-):
-    """Obtiene métricas pre-calculadas de la capa Gold.
+@app.get("/api/v1/sqlserver/tables", tags=["SQL Server"])
+def list_sqlserver_tables():
+    """Inventario de las tablas cargadas desde SQL Server.
 
-    KPIs soportados:
-    - `monthly-revenue`: ingresos mensuales agregados.
-    - `customer-revenue`: clientes ordenados por recaudación total.
-    - `unit-performance`: desempeño y recaudación por unidad.
+    Devuelve por tabla: filas, cantidad de columnas, columnas y el último
+    `_dlt_load_id` (marca de la corrida de ingesta más reciente).
     """
-    clean_name = kpi_name.lower().replace("-", "_").strip()
     try:
-        if clean_name in ("monthly_revenue", "revenue"):
-            return engine.get_monthly_revenue(currency=currency)
-        if clean_name in ("customer_revenue", "customers"):
-            return engine.get_customer_revenue(limit=limit)
-        if clean_name in ("unit_performance", "units"):
-            return engine.get_unit_performance(limit=limit)
+        return engine.sqlserver_tables()
     except Exception as exc:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Error consultando KPI '{kpi_name}': {exc}",
+            detail=f"Error consultando las tablas de SQL Server: {exc}",
         ) from exc
 
-    raise HTTPException(
-        status_code=status.HTTP_400_BAD_REQUEST,
-        detail=f"KPI '{kpi_name}' no soportado. Disponibles: 'monthly-revenue', 'customer-revenue', 'unit-performance'.",
-    )
+
+@app.get("/api/v1/sqlserver/tables/{table}/rows", tags=["SQL Server"])
+def preview_sqlserver_rows(
+    table: str,
+    limit: int = Query(default=20, ge=1, le=100, description="Filas por página (1-100)."),
+    offset: int = Query(default=0, ge=0, description="Desplazamiento para paginar."),
+    schema: str = Query(default="bronze", description="Esquema del lago."),
+):
+    """Devuelve una página de filas reales de una tabla cargada desde SQL Server."""
+    try:
+        return engine.preview_rows(schema=schema, table=table, limit=limit, offset=offset)
+    except KeyError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error leyendo la tabla '{table}': {exc}",
+        ) from exc
 
 
 @app.get("/api/v1/snapshots", tags=["Time Travel"])

@@ -1,4 +1,11 @@
-"""Suite de pruebas de integración para Dulse Data Lake API y FastMCP Server."""
+"""Tests de integración de la API REST y el MCP contra la data real de SQL Server.
+
+El lake debe contener únicamente las 7 tablas `mssql_*` ingeridas desde SQL
+Server (más metadatos internos de dlt). La autenticación se cubre en
+`api/test_auth.py`.
+"""
+
+import json
 
 import pytest
 from fastapi.testclient import TestClient
@@ -7,14 +14,35 @@ from api.main import app
 from api.mcp_server import (
     describe_table as mcp_describe_table,
     get_catalog_resource,
-    get_kpi as mcp_get_kpi,
+    get_sqlserver_catalog_resource,
     list_snapshots as mcp_list_snapshots,
     list_tables as mcp_list_tables,
+    preview_rows as mcp_preview_rows,
     run_query as mcp_run_query,
+    sqlserver_tables as mcp_sqlserver_tables,
 )
 
-
 AUTH_HEADERS = {"X-API-Key": "test-key-1"}
+
+REAL_TABLES = {
+    "mssql_bs_moneda",
+    "mssql_bs_operacion",
+    "mssql_bs_organizacion",
+    "mssql_bs_producto",
+    "mssql_bs_transaccion",
+    "mssql_d_mart_ventas",
+    "mssql_d_mart_ventas_producto_cliente",
+}
+
+SYNTHETIC_TABLES = {
+    "customers",
+    "units",
+    "leases",
+    "payments",
+    "mssql_productos",
+    "mssql_ventas",
+    "mssql_movimientos",
+}
 
 
 @pytest.fixture(scope="module")
@@ -23,132 +51,127 @@ def client():
         yield test_client
 
 
-# === Test Suite 1: Healthcheck ===
-def test_health_check(client):
-    response = client.get("/health")
-    assert response.status_code == 200
-    data = response.json()
-    assert data["status"] == "healthy"
-    assert data["service"] == "dulse-lake-api"
-    assert data["mcp_mounted"] is True
-
-
-# === Test Suite 2: Catálogo y Tablas ===
-def test_list_tables_all_layers(client):
+# === Catálogo: solo data de SQL Server ===
+def test_list_tables_contains_only_sqlserver_tables(client):
     response = client.get("/api/v1/tables")
     assert response.status_code == 200
     tables = response.json()
-    assert len(tables) >= 15
 
-    schemas = {t["schema"] for t in tables}
-    assert "bronze" in schemas
-    assert "silver" in schemas
-    assert "gold" in schemas
-
-    # Validar presencia de tablas clave de Postgres y MSSQL
-    table_names = {t["full_name"] for t in tables}
-    assert "bronze.customers" in table_names
-    assert "bronze.mssql_bs_transaccion" in table_names
-    assert "silver.silver_customers" in table_names
-    assert "gold.gold_monthly_revenue" in table_names
+    names = {t["table"] for t in tables}
+    assert REAL_TABLES <= names
+    assert not (names & SYNTHETIC_TABLES)
+    assert all(name.startswith(("mssql_", "_dlt_")) for name in names)
+    assert {t["schema"] for t in tables} == {"bronze"}
 
 
-def test_describe_existing_table(client):
-    response = client.get("/api/v1/tables/gold/gold_monthly_revenue")
+def test_describe_real_table(client):
+    response = client.get("/api/v1/tables/bronze/mssql_bs_transaccion")
     assert response.status_code == 200
     data = response.json()
-    assert data["schema"] == "gold"
-    assert data["table"] == "gold_monthly_revenue"
-    assert data["row_count"] > 0
-    assert len(data["columns"]) == 4
-    col_names = [c["name"] for c in data["columns"]]
-    assert "month" in col_names
-    assert "total_amount" in col_names
-    assert len(data["sample"]) <= 5
+    assert data["row_count"] > 300_000
+    col_names = {c["name"] for c in data["columns"]}
+    # El fast path (bcp -> staging -> MERGE) normaliza los nombres a snake_case.
+    assert {"transaccion_id", "importe_total"} <= col_names
+    assert 0 < len(data["sample"]) <= 5
 
 
 def test_describe_table_not_found(client):
-    response = client.get("/api/v1/tables/gold/tabla_inexistente")
-    assert response.status_code == 404
+    assert client.get("/api/v1/tables/bronze/tabla_inexistente").status_code == 404
 
 
 def test_describe_table_invalid_identifier(client):
-    response = client.get("/api/v1/tables/gold/tabla;drop")
+    assert client.get("/api/v1/tables/bronze/tabla;drop").status_code == 400
+
+
+# === Inventario SQL Server ===
+def test_sqlserver_tables_inventory(client):
+    response = client.get("/api/v1/sqlserver/tables")
+    assert response.status_code == 200
+    inventory = response.json()
+
+    assert {row["table"] for row in inventory} == REAL_TABLES
+    for row in inventory:
+        assert row["schema"] == "bronze"
+        assert row["row_count"] > 0
+        assert row["column_count"] == len(row["columns"])
+        assert row["last_load_id"], f"{row['table']} sin _dlt_load_id"
+
+
+def test_preview_rows_paginates_real_data(client):
+    inventory = {row["table"]: row for row in client.get("/api/v1/sqlserver/tables").json()}
+    total = inventory["mssql_bs_moneda"]["row_count"]
+
+    first_page = client.get(
+        "/api/v1/sqlserver/tables/mssql_bs_moneda/rows", params={"limit": 5}
+    )
+    assert first_page.status_code == 200
+    page = first_page.json()
+    assert page["total_rows"] == total
+    assert page["row_count"] == min(5, total)
+    assert "moneda_id" in page["columns"]
+
+    tail = client.get(
+        "/api/v1/sqlserver/tables/mssql_bs_moneda/rows",
+        params={"limit": 5, "offset": max(total - 2, 0)},
+    ).json()
+    assert tail["row_count"] == min(2, total)
+
+
+def test_preview_rows_unknown_table_is_404(client):
+    response = client.get("/api/v1/sqlserver/tables/no_existe/rows")
+    assert response.status_code == 404
+
+
+def test_preview_rows_invalid_table_is_400(client):
+    response = client.get("/api/v1/sqlserver/tables/bad;name/rows")
     assert response.status_code == 400
 
 
-# === Test Suite 3: KPIs Curados ===
-def test_kpi_monthly_revenue(client):
-    response = client.get("/api/v1/kpis/monthly-revenue")
-    assert response.status_code == 200
-    rows = response.json()
-    assert len(rows) > 0
-    assert "total_amount" in rows[0]
-    assert "month" in rows[0]
-
-
-def test_kpi_customer_revenue(client):
-    response = client.get("/api/v1/kpis/customer-revenue?limit=5")
-    assert response.status_code == 200
-    rows = response.json()
-    assert len(rows) <= 5
-    assert "customer_id" in rows[0]
-    assert "total_paid" in rows[0]
-
-
-def test_kpi_unit_performance(client):
-    response = client.get("/api/v1/kpis/unit-performance?limit=5")
-    assert response.status_code == 200
-    rows = response.json()
-    assert len(rows) <= 5
-    assert "unit_id" in rows[0]
-    assert "total_collected" in rows[0]
-
-
-def test_kpi_unknown_returns_400(client):
-    response = client.get("/api/v1/kpis/kpi_desconocido")
-    assert response.status_code == 400
-
-
-# === Test Suite 4: Snapshots y Time Travel ===
+# === Time Travel ===
 def test_list_snapshots(client):
     response = client.get("/api/v1/snapshots?limit=5")
     assert response.status_code == 200
     snapshots = response.json()
-    assert len(snapshots) > 0
-    assert "snapshot_id" in snapshots[0]
-    assert "snapshot_time" in snapshots[0]
+    assert 0 < len(snapshots) <= 5
+    assert {"snapshot_id", "snapshot_time"} <= set(snapshots[0])
 
 
-# === Test Suite 5: SQL Sandbox & Guardrails ===
-def test_sql_query_valid(client):
-    response = client.post(
-        "/api/v1/query",
-        json={"sql": "SELECT COUNT(*) AS total FROM lake.silver.silver_payments", "limit": 10},
-    )
-    assert response.status_code == 200
-    data = response.json()
-    assert data["columns"] == ["total"]
-    assert data["rows"][0][0] == 1309
-
-
-def test_sql_query_mssql_transactions(client):
+# === SQL sandbox y guardrails ===
+def test_sql_query_counts_real_transactions(client):
     response = client.post(
         "/api/v1/query",
         json={"sql": "SELECT COUNT(*) AS n_tx FROM lake.bronze.mssql_bs_transaccion", "limit": 10},
     )
     assert response.status_code == 200
-    assert response.json()["rows"][0][0] > 300000
+    data = response.json()
+    assert data["columns"] == ["n_tx"]
+    assert data["rows"][0][0] > 300_000
+
+
+def test_sql_query_row_cap_is_enforced(client):
+    at_cap = client.post(
+        "/api/v1/query",
+        json={"sql": "SELECT * FROM lake.bronze.mssql_bs_moneda", "limit": 1000},
+    )
+    assert at_cap.status_code == 200
+    assert at_cap.json()["limit_applied"] == 1000
+
+    # Por encima del tope el schema rechaza el pedido (422), no lo recorta en silencio.
+    over_cap = client.post(
+        "/api/v1/query",
+        json={"sql": "SELECT * FROM lake.bronze.mssql_bs_moneda", "limit": 5000},
+    )
+    assert over_cap.status_code == 422
 
 
 def test_sql_guardrail_blocks_mutation(client):
     mutations = [
-        "DROP TABLE lake.gold.gold_monthly_revenue",
-        "DELETE FROM lake.silver.silver_payments WHERE id = 1",
-        "UPDATE lake.bronze.customers SET name = 'hacked'",
-        "INSERT INTO lake.gold.gold_monthly_revenue VALUES ('2026-10-01', 'USD', 100, 1)",
-        "ALTER TABLE lake.gold.gold_monthly_revenue ADD COLUMN foo INT",
-        "TRUNCATE lake.silver.silver_leases",
+        "DROP TABLE lake.bronze.mssql_bs_moneda",
+        "DELETE FROM lake.bronze.mssql_bs_moneda WHERE moneda_id = 1",
+        "UPDATE lake.bronze.mssql_bs_moneda SET nombre = 'X'",
+        "INSERT INTO lake.bronze.mssql_bs_moneda VALUES (99, 'X', 'X')",
+        "ALTER TABLE lake.bronze.mssql_bs_moneda ADD COLUMN foo INT",
+        "TRUNCATE lake.bronze.mssql_bs_transaccion",
     ]
     for sql in mutations:
         response = client.post("/api/v1/query", json={"sql": sql})
@@ -156,41 +179,37 @@ def test_sql_guardrail_blocks_mutation(client):
 
 
 def test_sql_guardrail_blocks_multiple_statements(client):
-    response = client.post(
-        "/api/v1/query",
-        json={"sql": "SELECT 1; SELECT 2"},
-    )
+    response = client.post("/api/v1/query", json={"sql": "SELECT 1; SELECT 2"})
     assert response.status_code == 400
 
 
-# === Test Suite 6: FastMCP Tools & Resources ===
-def test_mcp_tools_execution():
-    # 1. list_tables
-    tables = mcp_list_tables(["gold"])
-    assert len(tables) == 3
-    assert {t["table"] for t in tables} == {
-        "gold_monthly_revenue",
-        "gold_customer_revenue",
-        "gold_unit_performance",
-    }
+# === Removidos por la decisión "solo bronze MSSQL" ===
+def test_removed_kpi_endpoint_is_gone(client):
+    assert client.get("/api/v1/kpis/monthly-revenue").status_code == 404
 
-    # 2. describe_table
-    desc = mcp_describe_table("gold", "gold_customer_revenue")
+
+# === FastMCP tools y resources ===
+def test_mcp_tools_execution():
+    inventory = mcp_sqlserver_tables()
+    assert {row["table"] for row in inventory} == REAL_TABLES
+
+    tables = mcp_list_tables()
+    assert {row["table"] for row in tables} >= REAL_TABLES
+    assert {row["schema"] for row in tables} == {"bronze"}
+
+    desc = mcp_describe_table("bronze", "mssql_bs_moneda")
     assert desc["row_count"] > 0
     assert len(desc["sample"]) > 0
 
-    # 3. get_kpi
-    rev = mcp_get_kpi("monthly_revenue")
-    assert len(rev) > 0
+    page = mcp_preview_rows("mssql_bs_moneda", limit=3)
+    assert page["row_count"] == min(3, page["total_rows"])
+    assert len(page["columns"]) == len(page["rows"][0])
 
-    # 4. run_query
-    res = mcp_run_query("SELECT 42 AS answer")
-    assert res["rows"] == [[42]]
+    assert mcp_run_query("SELECT 42 AS answer")["rows"] == [[42]]
+    assert 0 < len(mcp_list_snapshots(limit=3)) <= 3
 
-    # 5. list_snapshots
-    snaps = mcp_list_snapshots(limit=3)
-    assert len(snaps) > 0
 
-    # 6. get_catalog_resource
-    cat_str = get_catalog_resource()
-    assert "gold.gold_monthly_revenue" in cat_str
+def test_mcp_resources_expose_sqlserver_catalog():
+    catalog = json.loads(get_sqlserver_catalog_resource())
+    assert {row["table"] for row in catalog} == REAL_TABLES
+    assert "mssql_bs_transaccion" in get_catalog_resource()
