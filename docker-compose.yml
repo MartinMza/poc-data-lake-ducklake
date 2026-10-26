@@ -27,26 +27,6 @@ services:
       retries: 10
       start_period: 10s
 
-  postgres-source:
-    image: postgres:17.6-bookworm
-    container_name: dulse-postgres-source
-    restart: unless-stopped
-    environment:
-      POSTGRES_DB: ${SOURCE_DB:-source_db}
-      POSTGRES_USER: ${SOURCE_USER:-source_user}
-      POSTGRES_PASSWORD: ${SOURCE_PASSWORD:-source_password}
-      PGDATA: /var/lib/postgresql/data/pgdata
-    ports:
-      - "${SOURCE_PORT:-5434}:${SOURCE_INTERNAL_PORT:-5432}"
-    volumes:
-      - pgsource-data:/var/lib/postgresql/data
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -p ${SOURCE_INTERNAL_PORT:-5432} -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
-      interval: 5s
-      timeout: 5s
-      retries: 10
-      start_period: 10s
-
   garage:
     build:
       context: .
@@ -132,11 +112,6 @@ services:
       CATALOG_DB: ${CATALOG_DB:-ducklake_catalog}
       CATALOG_USER: ${CATALOG_USER:-ducklake}
       CATALOG_PASSWORD: ${CATALOG_PASSWORD:-ducklake}
-      SOURCE_HOST: ${DOCKER_SOURCE_HOST:-postgres-source}
-      SOURCE_PORT: "${SOURCE_INTERNAL_PORT:-5432}"
-      SOURCE_DB: ${SOURCE_DB:-source_db}
-      SOURCE_USER: ${SOURCE_USER:-source_user}
-      SOURCE_PASSWORD: ${SOURCE_PASSWORD:-source_password}
       GARAGE_SCHEME: ${GARAGE_SCHEME:-http}
       GARAGE_HOST: ${DOCKER_GARAGE_HOST:-garage}
       GARAGE_S3_PORT: "${GARAGE_S3_PORT:-3900}"
@@ -151,15 +126,12 @@ services:
       PREFECT_SCHEME: ${PREFECT_SCHEME:-http}
       PREFECT_HOST: ${DOCKER_PREFECT_HOST:-prefect-server}
       PREFECT_PORT: "${PREFECT_INTERNAL_PORT:-4200}"
-      SEED_SCALE: ${SEED_SCALE:-demo}
     volumes:
       - ./mssql-backup:/workspace/mssql-backup
       - ./mssql-fast:/workspace/mssql-fast
       - ./backups:/workspace/backups
     depends_on:
       postgres-catalog:
-        condition: service_healthy
-      postgres-source:
         condition: service_healthy
       garage:
         condition: service_healthy
@@ -208,7 +180,6 @@ services:
 
 volumes:
   pgcatalog-data:
-  pgsource-data:
   garage-meta:
   garage-data:
   prefect-data:

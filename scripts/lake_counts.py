@@ -1,12 +1,11 @@
 #!/usr/bin/env python3
-"""Conteos bronze/silver/gold del DuckLake (JSON a stdout).
+"""Conteos de tablas del DuckLake (JSON a stdout).
 
-OpenSpec `poc-data-lake-ducklake`, tareas 7.1/7.4. Helper compartido por
-`scripts/backup.sh` (manifiesto), `scripts/restore.sh` (verificación),
-benchmark y prueba de concurrencia. Solo lectura.
+Helper compartido por `scripts/backup.sh` (manifiesto), `scripts/restore.sh`
+(verificación) y `scripts/purge_sample_data.py`. Solo lectura.
 
 Uso (con el venv que tenga duckdb fijado, p. ej. bronze/.venv):
-    bronze/.venv/bin/python scripts/lake_counts.py [--schemas bronze,silver,gold]
+    bronze/.venv/bin/python scripts/lake_counts.py [--schemas bronze]
 
 Env: mismos defaults que docker-compose.yml/.env.example (CATALOG_*,
 GARAGE_S3_*, DUCKLAKE_DATA_PATH).
@@ -73,7 +72,7 @@ def connect():
 
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description="Conteos del lago (JSON)")
-    ap.add_argument("--schemas", default="bronze,silver,gold")
+    ap.add_argument("--schemas", default="bronze")
     args = ap.parse_args(argv)
     con = connect()
     out: dict[str, int] = {}

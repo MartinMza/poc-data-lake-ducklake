@@ -1,36 +1,29 @@
 #!/usr/bin/env python3
-"""Flow Prefect: restore condicional (.bak) -> ingestas bronze -> `dbt run` -> `dbt test`.
+"""Flow Prefect: restore condicional del .bak -> ingesta bronze desde SQL Server.
 
-OpenSpec `poc-data-lake-ducklake`, tareas 6.1-6.2 (spec `orchestration`)
-+ OpenSpec `mssql-prefect-flow` (specs `bak-watch-restore`, `mssql-flow-branch`).
+Feature `api-auth-mssql-only`; el lago quedó con una única fuente (SQL Server).
+El origen Postgres sintético, las ramas en paralelo y las etapas dbt fueron
+retirados: el flujo es lineal y de una sola rama.
 
-- `bak-watch-restore` (primera): compara el `.bak` de `MSSQL_BAK_PATH`
-  contra la marca JSON del último restore exitoso
-  (`orchestration/.last_restore.json`: path+mtime+size+DB); si no hay
-  `.bak` nuevo se salta en éxito. Sin `MSSQL_BAK_PATH` se salta con
-  warning (operador solo-postgres). Doble lectura con espera breve
-  anti-copia-parcial. Si hay `.bak` nuevo lo copia a `./mssql-backup/`,
-  lo restaura con `scripts/restore_mssql.sh` y actualiza la marca SOLO
-  en éxito.
-- Ramas en paralelo: `bronze-ingest` (postgres, dlt) y `mssql-ingest`
-  (fast path `fast_mssql.py`, default; `FAST_MSSQL_MODE=dlt` usa
-  `pipeline_mssql.py`) corren concurrentes; `dbt run`/`dbt test` actúan
-  como join: solo corren si ambas ramas terminan en éxito (fail-stop:
-  si una rama lanza, dbt no se ejecuta y el flow queda Failed con el
-  error de la rama origen).
+- `bak-watch-restore` (primera): compara el `.bak` de `MSSQL_BAK_PATH` contra
+  la marca JSON del último restore exitoso
+  (`orchestration/.last_restore.json`: path+mtime+size+DB); sin `.bak` nuevo
+  se salta en éxito. Sin `MSSQL_BAK_PATH` se salta con warning (operador que
+  ya restauró a mano). Doble lectura con espera breve anti-copia-parcial. Si
+  hay `.bak` nuevo lo copia a `./mssql-backup/`, lo restaura con
+  `scripts/restore_mssql.sh` y actualiza la marca SOLO en éxito.
+- `mssql-ingest`: fast path `bronze/fast_mssql.py all` (default) o dlt
+  `bronze/pipeline_mssql.py` con `FAST_MSSQL_MODE=dlt` (fallback/rollback).
 - Reintentos por tarea: cada `@task` lleva `retries` + `retry_delay_seconds`
   (configurables por env). Los intentos y sus logs quedan en Prefect.
-- Sin duplicar entornos: cada etapa se ejecuta como subproceso con el venv
-  ya verificado de su slice (`bronze/.venv` con dlt==1.31.0, `dbt/.venv`
-  con dbt-core==1.12.5/dbt-duckdb==1.11.0). Este venv solo aporta prefect.
-- Config por env: el subproceso hereda `os.environ`, por lo que toda la
-  config de `bronze/pipeline.py` (CATALOG_*, SOURCE_*, GARAGE_*,
-  DUCKLAKE_*), `bronze/fast_mssql.py` / `bronze/pipeline_mssql.py`
-  (MSSQL_*, FAST_MSSQL_*) y `PREFECT_API_URL` se parametriza sin tocar código.
-  Solo datos sintéticos (origen simulado). Sin credenciales en el repo.
+- Sin duplicar entornos: cada etapa corre como subproceso con el venv ya
+  verificado de su componente (`bronze/.venv`); este venv solo aporta prefect.
+- Config por env: el subproceso hereda `os.environ`, así que `MSSQL_*`,
+  `FAST_MSSQL_*`, `CATALOG_*`, `GARAGE_*`, `DUCKLAKE_*` y `PREFECT_API_URL` se
+  parametrizan sin tocar código.
 
 Uso:
-    orchestration/.venv/bin/python orchestration/flow.py [--tables ...] [--full-refresh]
+    orchestration/.venv/bin/python orchestration/flow.py [--full-refresh]
     # PREFECT_API_URL=http://localhost:4200/api para trackear en prefect-server.
 
 Entrypoint único y documentado: `python orchestration/flow.py`.
@@ -54,15 +47,12 @@ from prefect import flow, get_run_logger, task
 ROOT = Path(__file__).resolve().parent.parent
 
 BRONZE_PYTHON = os.getenv("BRONZE_PYTHON", str(ROOT / "bronze" / ".venv" / "bin" / "python"))
-DBT_BIN = os.getenv("DBT_BIN", str(ROOT / "dbt" / ".venv" / "bin" / "dbt"))
-DBT_PROJECT_DIR = os.getenv("DBT_PROJECT_DIR", str(ROOT / "dbt"))
-DBT_PROFILES_DIR = os.getenv("DBT_PROFILES_DIR", str(ROOT / "dbt"))
 
 TASK_RETRIES = int(os.getenv("ORCH_TASK_RETRIES", "2"))
 TASK_RETRY_DELAY_SECONDS = int(os.getenv("ORCH_TASK_RETRY_DELAY_SECONDS", "30"))
 
 # Marca del último restore exitoso (path+mtime+size+DB). Local y gitignored
-# (ver orchestration/.gitignore); se actualiza solo tras restore + verificación OK.
+# (ver orchestration/.gitignore); se actualiza solo tras restore OK.
 RESTORE_MARK_PATH = Path(os.getenv(
     "ORCH_RESTORE_MARK",
     str(ROOT / "orchestration" / ".last_restore.json")))
@@ -91,18 +81,6 @@ def _run(cmd: list[str], stage: str) -> str:
         tail = "\n".join(proc.stdout.splitlines()[-15:])
         raise RuntimeError(f"{stage} falló con rc={proc.returncode}. Cola:\n{tail}")
     return proc.stdout
-
-
-@task(name="bronze-ingest", retries=TASK_RETRIES,
-      retry_delay_seconds=TASK_RETRY_DELAY_SECONDS, log_prints=True)
-def bronze_ingest(tables: str | None = None, full_refresh: bool = False) -> str:
-    """Rama postgres: pipeline dlt postgres-source -> bronze en DuckLake."""
-    cmd = [BRONZE_PYTHON, "bronze/pipeline.py"]
-    if tables:
-        cmd += ["--tables", tables]
-    if full_refresh:
-        cmd += ["--full-refresh"]
-    return _run(cmd, "bronze-ingest")
 
 
 def _stat_sig(path: Path) -> tuple[int, int]:
@@ -149,8 +127,8 @@ def _read_mark() -> dict | None:
 def bak_watch_restore() -> str:
     """Etapa 0: restore condicional del .bak indicado por `MSSQL_BAK_PATH`.
 
-    Sin variable configurada termina en éxito con warning (operador
-    solo-postgres). Con `.bak` sin cambios respecto a la marca termina en
+    Sin variable configurada termina en éxito con warning (el operador ya
+    restauró la base). Con `.bak` sin cambios respecto a la marca termina en
     éxito sin tocar la instancia. La marca se actualiza solo en éxito.
     """
     logger = get_run_logger()
@@ -233,7 +211,7 @@ def bak_watch_restore() -> str:
 @task(name="mssql-ingest", retries=TASK_RETRIES,
       retry_delay_seconds=TASK_RETRY_DELAY_SECONDS, log_prints=True)
 def mssql_ingest(full_refresh: bool = False) -> str:
-    """Rama MSSQL: fast path (`fast_mssql.py all`) por default, dlt
+    """Ingesta MSSQL: fast path (`fast_mssql.py all`) por default, dlt
     (`pipeline_mssql.py`) con `FAST_MSSQL_MODE=dlt`. Tablas/ventana por env
     (`MSSQL_TABLES`, `FAST_MSSQL_WINDOW_DAYS`); hereda el resto de `os.environ`."""
     mode = os.getenv("FAST_MSSQL_MODE", "fast").strip().lower() or "fast"
@@ -251,53 +229,22 @@ def mssql_ingest(full_refresh: bool = False) -> str:
     return _run(cmd, f"mssql-ingest[{mode}]")
 
 
-@task(name="dbt-run", retries=TASK_RETRIES,
-      retry_delay_seconds=TASK_RETRY_DELAY_SECONDS, log_prints=True)
-def dbt_run() -> str:
-    """Etapa 2: `dbt run` (silver + gold sobre el mismo DuckLake)."""
-    cmd = [DBT_BIN, "run", "--project-dir", DBT_PROJECT_DIR,
-           "--profiles-dir", DBT_PROFILES_DIR]
-    return _run(cmd, "dbt-run")
-
-
-@task(name="dbt-test", retries=TASK_RETRIES,
-      retry_delay_seconds=TASK_RETRY_DELAY_SECONDS, log_prints=True)
-def dbt_test() -> str:
-    """Etapa 3: `dbt test` (not_null, unique, relationships + singular)."""
-    cmd = [DBT_BIN, "test", "--project-dir", DBT_PROJECT_DIR,
-           "--profiles-dir", DBT_PROFILES_DIR]
-    return _run(cmd, "dbt-test")
-
-
 @flow(name=FLOW_NAME, log_prints=True)
-def dulse_medallion_flow(tables: str | None = None,
-                         full_refresh: bool = False) -> dict[str, str]:
-    """Día completo: restore condicional, ambas ingestas en paralelo y dbt
-    como join (solo corre si las dos ramas terminan en éxito; si una rama
-    lanza, dbt no se ejecuta y el flow queda Failed con el error origen)."""
+def dulse_medallion_flow(full_refresh: bool = False) -> dict[str, str]:
+    """Día completo: restore condicional del .bak y luego la ingesta bronze
+    desde SQL Server (fail-stop: si el restore falla, no se ingesta)."""
     restore_log = bak_watch_restore()
-    pg_future = bronze_ingest.submit(tables=tables, full_refresh=full_refresh)
-    ms_future = mssql_ingest.submit(full_refresh=full_refresh)
-    bronze_log = pg_future.result()
-    mssql_log = ms_future.result()
-    run_log = dbt_run()
-    test_log = dbt_test()
-    return {"bak_watch_restore": restore_log, "bronze_ingest": bronze_log,
-            "mssql_ingest": mssql_log, "dbt_run": run_log,
-            "dbt_test": test_log}
+    ingest_log = mssql_ingest(full_refresh=full_refresh)
+    return {"bak_watch_restore": restore_log, "mssql_ingest": ingest_log}
 
 
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(
-        description="Flow restore-condicional -> ingestas -> dbt run -> dbt test")
-    ap.add_argument("--tables", default=None,
-                    help="subset coma-separado para bronze/pipeline.py (postgres)")
+        description="Flow restore-condicional -> ingesta bronze desde SQL Server")
     ap.add_argument("--full-refresh", action="store_true",
-                    help="pasa --full-refresh a bronze/pipeline.py")
+                    help="pasa --full (fast path) o --full-refresh (dlt) a la ingesta")
     args = ap.parse_args(argv)
-    state = dulse_medallion_flow(tables=args.tables,
-                                full_refresh=args.full_refresh,
-                                return_state=True)
+    state = dulse_medallion_flow(full_refresh=args.full_refresh, return_state=True)
     print(f"flow {FLOW_NAME}: {state.name}")
     return 0 if state.is_completed() else 1
 

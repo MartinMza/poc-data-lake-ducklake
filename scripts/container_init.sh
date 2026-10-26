@@ -3,11 +3,10 @@
 #
 # Se ejecuta automáticamente en el servicio `lake-init` al levantar el stack:
 #   1. Crea la base del catálogo DuckLake si no existe
-#   2. Genera el seed inicial en postgres-source si está vacío
-#   3. Ejecuta la ingesta Bronze desde Postgres
-#   4. Si hay un .tar o .bak en ./mssql-backup/, lo descomprime, restaura en SQL Server e ingiere en Bronze
-#   5. Corre dbt run + dbt test (modelos Silver y Gold)
-#   6. Exporta la capa Gold a gold_serving (Postgres) y muestra el conteo final en los logs de Portainer
+#   2. Si hay un .tar o .bak en ./mssql-backup/, lo descomprime y lo restaura en SQL Server
+#   3. Ingesta esas tablas en Bronze (fast path bcp/MERGE; dlt como fallback)
+#   4. Muestra el conteo final del lago en los logs de Portainer
+# La única fuente de datos es SQL Server: no hay seed sintético ni capas dbt.
 
 set -euo pipefail
 
@@ -19,12 +18,6 @@ CATALOG_DB="${CATALOG_DB:-ducklake_catalog}"
 CATALOG_USER="${CATALOG_USER:-ducklake}"
 CATALOG_PASSWORD="${CATALOG_PASSWORD:-ducklake}"
 
-SOURCE_HOST="${SOURCE_HOST:-postgres-source}"
-SOURCE_PORT="${SOURCE_PORT:-5432}"
-SOURCE_DB="${SOURCE_DB:-source_db}"
-SOURCE_USER="${SOURCE_USER:-source_user}"
-SOURCE_PASSWORD="${SOURCE_PASSWORD:-source_password}"
-
 export GARAGE_SCHEME="${GARAGE_SCHEME:-http}"
 export GARAGE_HOST="${GARAGE_HOST:-garage}"
 export GARAGE_S3_PORT="${GARAGE_S3_PORT:-3900}"
@@ -32,13 +25,12 @@ export GARAGE_S3_PORT="${GARAGE_S3_PORT:-3900}"
 MSSQL_HOST="${MSSQL_HOST:-mssql}"
 MSSQL_PORT="${MSSQL_PORT:-1433}"
 MSSQL_SA_PASSWORD="${MSSQL_SA_PASSWORD:-Str0ng!PoC-Local01}"
-SEED_SCALE="${SEED_SCALE:-demo}"
 
 echo "================================================================="
 echo "  Dulse Data Lake — Auto-Init (Portainer / Docker Compose)"
 echo "================================================================="
 
-echo "==> [1/6] Verificando base de catálogo '$CATALOG_DB' en $CATALOG_HOST..."
+echo "==> [1/4] Verificando base de catálogo '$CATALOG_DB' en $CATALOG_HOST..."
 export PGPASSWORD="$CATALOG_PASSWORD"
 for _ in $(seq 1 30); do
   if pg_isready -h "$CATALOG_HOST" -p "$CATALOG_PORT" -U "$CATALOG_USER" >/dev/null 2>&1; then
@@ -54,34 +46,7 @@ if [[ "$DB_EXISTS" != "1" ]]; then
   psql -h "$CATALOG_HOST" -p "$CATALOG_PORT" -U "$CATALOG_USER" -d postgres -c "CREATE DATABASE \"$CATALOG_DB\""
 fi
 
-echo "==> [2/6] Verificando datos iniciales en $SOURCE_HOST ($SOURCE_DB)..."
-export PGPASSWORD="$SOURCE_PASSWORD"
-for _ in $(seq 1 30); do
-  if pg_isready -h "$SOURCE_HOST" -p "$SOURCE_PORT" -U "$SOURCE_USER" -d "$SOURCE_DB" >/dev/null 2>&1; then
-    break
-  fi
-  sleep 1
-done
-
-HAS_CUSTOMERS="$(psql -h "$SOURCE_HOST" -p "$SOURCE_PORT" -U "$SOURCE_USER" -d "$SOURCE_DB" -tAc \
-  "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema='public' AND table_name='customers'" 2>/dev/null || echo "0")"
-ROW_COUNT="0"
-if [[ "$HAS_CUSTOMERS" == "1" ]]; then
-  ROW_COUNT="$(psql -h "$SOURCE_HOST" -p "$SOURCE_PORT" -U "$SOURCE_USER" -d "$SOURCE_DB" -tAc \
-    "SELECT COUNT(*) FROM customers" 2>/dev/null || echo "0")"
-fi
-
-if [[ "$ROW_COUNT" == "0" ]]; then
-  echo "    Generando datos sintéticos en postgres-source (escala: $SEED_SCALE)..."
-  /workspace/bronze/.venv/bin/python source/generate.py --mode seed --scale "$SEED_SCALE" --out postgres
-else
-  echo "    postgres-source ya cuenta con datos ($ROW_COUNT clientes)."
-fi
-
-echo "==> [3/6] Ingestando Postgres hacia DuckLake (Bronze)..."
-/workspace/bronze/.venv/bin/python bronze/pipeline.py
-
-echo "==> [4/6] Verificando backups de SQL Server (.tar / .bak) en ./mssql-backup/..."
+echo "==> [2/4] Verificando backups de SQL Server (.tar / .bak) en ./mssql-backup/..."
 mkdir -p /workspace/mssql-backup
 
 # Si hay un .tar/.tar.gz/.tgz/.tar.bz2/.tar.xz/.tar.zst, extraer el .bak
@@ -162,19 +127,13 @@ if [[ -n "$SELECTED_BAK" ]]; then
     export MSSQL_PIPELINE_NAME="${MSSQL_PIPELINE_NAME:-bronze_mssql_faf12}"
   fi
 
-  echo "    Ingestando datos de MSSQL [$TARGET_DB] hacia DuckLake (Bronze)..."
+  echo "==> [3/4] Ingestando datos de MSSQL [$TARGET_DB] hacia DuckLake (Bronze)..."
   /workspace/bronze/.venv/bin/python bronze/fast_mssql.py all
 else
   echo "    Sin archivos .bak/.tar en ./mssql-backup/ (se omite ingesta MSSQL)."
 fi
 
-echo "==> [5/6] Ejecutando transformaciones y tests dbt (Silver + Gold)..."
-/workspace/dbt/.venv/bin/dbt run --project-dir dbt --profiles-dir dbt
-/workspace/dbt/.venv/bin/dbt test --project-dir dbt --profiles-dir dbt
-
-echo "==> [6/6] Exportando capa Gold a gold_serving (Postgres)..."
-/workspace/bronze/.venv/bin/python scripts/export_gold.py
-
+echo "==> [4/4] Conteo final del Data Lake..."
 echo ""
 echo "================================================================="
 echo "  Conteo Final de Tablas en el Data Lake"

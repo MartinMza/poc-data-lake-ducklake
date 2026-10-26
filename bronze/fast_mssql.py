@@ -30,9 +30,9 @@ NULL` (los NULL se re-mergean: correcto aunque menos rapido). `--resync`
 fuerza full. `--cutoff YYYY-MM-DD` fija la fecha de corte (validacion sobre
 snapshots estaticos; default: GETDATE()).
 
-No toca `pipeline.py`, `pipeline_mssql.py` (solo lo importa para reutilizar
-`effective_tables`/`dest_tables`/`build_urls`), `dbt/`, `orchestration/`,
-`docker-compose.yml`.
+No toca `pipeline_mssql.py` (solo lo importa para reutilizar
+`effective_tables`/`dest_tables`/`build_urls`/`DEFAULT_MSSQL_TABLES`),
+`orchestration/` ni `docker-compose.yml`.
 
 Uso:
     bronze/.venv/bin/python bronze/fast_mssql.py export [--tables ...] [--full|--resync] [--cutoff ...]
@@ -59,13 +59,6 @@ from datetime import datetime, timezone
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "scripts"))
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-
-MSSQL_TABLES_DEFAULT = (
-    "BSMoneda:MonedaID:merge,BSProducto:ProductoID:merge,"
-    "BSOrganizacion:OrganizacionID:merge,BSTransaccion:TransaccionID:merge,"
-    "BSOperacion:TransaccionID:merge,DMart_Ventas::replace,"
-    "DMart_VentasProductoCliente::replace"
-)
 
 # Solo tablas grandes con fecha fiable van por ventana (design decision 3).
 TABLE_WINDOW_COL: dict[str, str] = {
@@ -97,11 +90,11 @@ def mssql_pw() -> str:
 
 
 def table_config() -> tuple[dict[str, str], dict[str, str]]:
-    """Lee MSSQL_TABLES (default: subset PoC de 7). Import read-only de pipeline_mssql."""
-    if not os.getenv("MSSQL_TABLES", "").strip():
-        os.environ["MSSQL_TABLES"] = MSSQL_TABLES_DEFAULT
-    from pipeline_mssql import effective_tables
+    """Lee MSSQL_TABLES (default: las 7 tablas reales). Reusa pipeline_mssql."""
+    from pipeline_mssql import DEFAULT_MSSQL_TABLES, effective_tables
 
+    if not os.getenv("MSSQL_TABLES", "").strip():
+        os.environ["MSSQL_TABLES"] = DEFAULT_MSSQL_TABLES
     return effective_tables()
 
 
