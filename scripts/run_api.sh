@@ -24,6 +24,26 @@ API_PORT="${API_PORT:-8000}"
 CATALOG_USER="${CATALOG_USER:-ducklake}"
 CATALOG_DB="${CATALOG_DB:-ducklake_catalog}"
 
+# Auth fail-closed: sin API keys ni usuarios JWT el servicio no arranca.
+if [[ -z "${AUTH_API_KEYS:-}" && -z "${AUTH_USERS:-}" ]]; then
+  echo "ERROR: auth sin configurar. Definí AUTH_API_KEYS y/o AUTH_USERS (+ AUTH_JWT_SECRET) en .env." >&2
+  echo "       Generá una API key:  openssl rand -hex 24" >&2
+  echo "       Generá un secreto JWT: openssl rand -hex 32" >&2
+  echo "       Hasheá un password:  api/.venv/bin/python scripts/hash_password.py" >&2
+  exit 1
+fi
+if [[ -n "${AUTH_USERS:-}" && -z "${AUTH_JWT_SECRET:-}" ]]; then
+  echo "ERROR: AUTH_USERS está definido pero falta AUTH_JWT_SECRET (openssl rand -hex 32)." >&2
+  exit 1
+fi
+AUTH_KEY_HINT="${AUTH_API_KEYS:-}${AUTH_API_KEYS:+,}"
+AUTH_KEY_HINT="${AUTH_KEY_HINT%%,*}"
+if [[ -n "$AUTH_KEY_HINT" ]]; then
+  AUTH_HINT="header X-API-Key: ${AUTH_KEY_HINT:0:12}…"
+else
+  AUTH_HINT="POST /auth/token (usuarios de AUTH_USERS)"
+fi
+
 MODE="host"
 if [[ "${1:-}" == "--docker" ]]; then
   MODE="docker"
@@ -68,6 +88,7 @@ if [[ "$MODE" == "docker" ]]; then
   echo "================================================================="
   echo "  - Documentación Swagger UI: http://${API_HOST}:${API_PORT}/docs"
   echo "  - FastMCP SSE (Agentes AI): http://${API_HOST}:${API_PORT}/mcp/sse"
+  echo "  - Auth (REST y MCP):       ${AUTH_HINT}"
   echo "  - Ver logs del contenedor:  docker compose logs -f lake-api"
   echo "  - Detener servicio:         docker compose stop lake-api"
   echo "================================================================="
@@ -89,7 +110,8 @@ echo "  Dulse Lake API & MCP corriendo en Host (puerto ${API_PORT})"
 echo "================================================================="
 echo "  - Documentación Swagger UI: http://${API_HOST}:${API_PORT}/docs"
 echo "  - FastMCP SSE (Agentes AI): http://${API_HOST}:${API_PORT}/mcp/sse"
-echo "  - FastMCP Stdio (Claude):   api/.venv/bin/python -m api.mcp_server"
+echo "  - FastMCP Stdio (Claude):   api/.venv/bin/python -m api.mcp_server (sin auth: proceso local)"
+echo "  - Auth (REST y MCP):       ${AUTH_HINT}"
 echo "================================================================="
 echo ""
 

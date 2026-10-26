@@ -6,10 +6,11 @@ from typing import Any
 
 from fastapi import FastAPI, HTTPException, Query, status
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.openapi.utils import get_openapi
 from fastapi.responses import RedirectResponse
 from pydantic import BaseModel, Field
 
-from api import engine
+from api import auth, engine
 from api.mcp_server import mcp
 
 app = FastAPI(
@@ -17,6 +18,13 @@ app = FastAPI(
     version="1.0.0",
     description="API REST y servidor MCP para consultar el DuckLake (capas bronze, silver, gold y Time Travel).",
 )
+
+# Fail-closed: sin credenciales configuradas el servicio no arranca.
+auth.assert_configured()
+
+# Auth envuelve TODO (rutas REST + sub-app MCP en /mcp). Se agrega antes que
+# CORS para que CORS quede por fuera y los 401 también lleven sus headers.
+app.add_middleware(auth.ApiAuthMiddleware, public_paths=auth.PUBLIC_PATHS)
 
 # Habilitar CORS para integración con dashboards web / frontends
 app.add_middleware(
@@ -29,6 +37,17 @@ app.add_middleware(
 
 # Montar servidor FastMCP con transporte SSE bajo /mcp
 app.mount("/mcp", mcp.http_app(transport="sse"))
+
+
+class TokenRequest(BaseModel):
+    username: str = Field(..., min_length=1, description="Usuario definido en AUTH_USERS.")
+    password: str = Field(..., min_length=1, description="Password (plano o PBKDF2 en AUTH_USERS).")
+
+
+class TokenResponse(BaseModel):
+    access_token: str
+    token_type: str = "bearer"
+    expires_in: int = Field(..., description="Vigencia del token en segundos.")
 
 
 class QueryRequest(BaseModel):
@@ -59,6 +78,25 @@ def root():
     return RedirectResponse(url="/docs")
 
 
+@app.post("/auth/token", response_model=TokenResponse, tags=["Auth"])
+def issue_token(payload: TokenRequest):
+    """Emite un JWT (HS256) para un usuario de `AUTH_USERS`.
+
+    Alternativa humana a la API key: el token sirve igual para la API REST y
+    para el MCP por HTTP/SSE (`Authorization: Bearer <token>`).
+    """
+    try:
+        subject = auth.authenticate(payload.username, payload.password)
+    except auth.InvalidCredentials as exc:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail=exc.detail,
+            headers=exc.headers,
+        ) from exc
+    token, expires_in = auth.create_access_token(subject)
+    return TokenResponse(access_token=token, expires_in=expires_in)
+
+
 @app.get("/health", tags=["Health"])
 def health_check():
     """Verifica el estado del servicio y conectividad básica."""
@@ -68,6 +106,31 @@ def health_check():
         "version": "1.0.0",
         "mcp_mounted": True,
     }
+
+
+def _custom_openapi():
+    """OpenAPI con los dos esquemas de seguridad (botón Authorize de Swagger)."""
+    if app.openapi_schema:
+        return app.openapi_schema
+    schema = get_openapi(
+        title=app.title,
+        version=app.version,
+        description=app.description,
+        routes=app.routes,
+    )
+    components = schema.setdefault("components", {})
+    components.setdefault("securitySchemes", {}).update(
+        {
+            "ApiKeyAuth": {"type": "apiKey", "in": "header", "name": "X-API-Key"},
+            "BearerAuth": {"type": "http", "scheme": "bearer", "bearerFormat": "JWT"},
+        }
+    )
+    schema["security"] = [{"ApiKeyAuth": []}, {"BearerAuth": []}]
+    app.openapi_schema = schema
+    return schema
+
+
+app.openapi = _custom_openapi
 
 
 @app.get("/api/v1/tables", tags=["Catálogo"])

@@ -14,9 +14,12 @@ from api.mcp_server import (
 )
 
 
+AUTH_HEADERS = {"X-API-Key": "test-key-1"}
+
+
 @pytest.fixture(scope="module")
 def client():
-    with TestClient(app) as test_client:
+    with TestClient(app, headers=AUTH_HEADERS) as test_client:
         yield test_client
 
 

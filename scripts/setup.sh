@@ -87,6 +87,46 @@ else
   echo "    .env ya existe (se conserva)"
 fi
 
+# Escribe NAME=VALUE en .env: reemplaza la línea si existe, si no la agrega.
+# Un .env previo a este cambio no tiene el bloque de auth: sin el append, el
+# script reportaría éxito dejando el servicio sin credenciales (fail-closed).
+set_env_value() {
+  local name="$1" value="$2"
+  if grep -qE "^${name}=" .env; then
+    sed -i "s|^${name}=.*|${name}=${value}|" .env
+  else
+    printf '\n%s=%s\n' "$name" "$value" >> .env
+  fi
+}
+
+# Plantilla sin credenciales: si faltan, se generan acá (nunca se commitean).
+ensure_auth_secrets() {
+  local key jwt
+  key="$(grep -E '^AUTH_API_KEYS=' .env | cut -d= -f2- || true)"
+  jwt="$(grep -E '^AUTH_JWT_SECRET=' .env | cut -d= -f2- || true)"
+  if [[ -z "$key" ]]; then
+    key="$(openssl rand -hex 24)"
+    set_env_value AUTH_API_KEYS "$key"
+    echo "    AUTH_API_KEYS generada (guardala para tus clientes: header X-API-Key)"
+  fi
+  if [[ -z "$jwt" ]]; then
+    jwt="$(openssl rand -hex 32)"
+    set_env_value AUTH_JWT_SECRET "$jwt"
+    echo "    AUTH_JWT_SECRET generado (32 bytes) para los JWT"
+  fi
+  # Verificación real: el servicio es fail-closed, así que no alcanza con imprimir.
+  grep -qxE '^AUTH_API_KEYS=.+' .env \
+    || { echo "ERROR: AUTH_API_KEYS no quedó persistida en .env" >&2; exit 1; }
+  grep -qxE '^AUTH_JWT_SECRET=.+' .env \
+    || { echo "ERROR: AUTH_JWT_SECRET no quedó persistida en .env" >&2; exit 1; }
+  if ! grep -qE '^AUTH_USERS=.+' .env; then
+    echo "    AUTH_USERS vacío: no habrá login por usuario/JWT todavía."
+    echo "      Para habilitarlo: api/.venv/bin/python scripts/hash_password.py"
+    echo "      y agregá 'usuario:<hash>' en AUTH_USERS del .env."
+  fi
+}
+ensure_auth_secrets
+
 EXTRACTED_BAK=""
 
 extract_tar_to_backup() {

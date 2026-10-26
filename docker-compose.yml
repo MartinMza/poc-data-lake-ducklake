@@ -189,6 +189,11 @@ services:
       GARAGE_S3_SECRET: ${GARAGE_S3_SECRET:-0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef}
       GARAGE_S3_REGION: ${GARAGE_S3_REGION:-garage}
       DUCKLAKE_DATA_PATH: ${DUCKLAKE_DATA_PATH:-s3://lakehouse/data/}
+      # Auth obligatoria (fail-closed): API keys para servicio/agentes y JWT para personas.
+      AUTH_API_KEYS: ${AUTH_API_KEYS:-}
+      AUTH_USERS: ${AUTH_USERS:-}
+      AUTH_JWT_SECRET: ${AUTH_JWT_SECRET:-}
+      AUTH_JWT_TTL_MINUTES: ${AUTH_JWT_TTL_MINUTES:-60}
     depends_on:
       postgres-catalog:
         condition: service_healthy
