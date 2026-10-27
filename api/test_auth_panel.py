@@ -391,3 +391,32 @@ def test_no_duplicate_routes_and_no_panel_prefix_collisions():
         if path.startswith("/auth/panel"):
             continue
         assert not path.startswith("/api/v1") or method in {"GET", "POST"}, path
+
+
+def test_admin_cannot_disable_their_own_account(client):
+    """Auto-deshabilitarse sería quedar afuera para siempre (feedback de diseño)."""
+    _login_admin(client)
+    with auth_db.connection() as conn:
+        me = conn.execute(
+            "SELECT id FROM users WHERE username = %s", (SUPERADMIN_USERNAME,)
+        ).fetchone()
+    response = client.post(f"{PANEL}/usuarios/{me['id']}/deshabilitar")
+    assert response.status_code == 400
+    assert "propia cuenta" in response.text
+    with auth_db.connection() as conn:
+        row = conn.execute(
+            "SELECT disabled_at FROM users WHERE username = %s", (SUPERADMIN_USERNAME,)
+        ).fetchone()
+    assert row["disabled_at"] is None, "sigue activo"
+    assert client.get(PANEL).status_code == 200, "y sigue adentro"
+
+
+def test_my_own_row_offers_no_disable_button(client):
+    _login_admin(client)
+    with auth_db.connection() as conn:
+        me = conn.execute(
+            "SELECT id FROM users WHERE username = %s", (SUPERADMIN_USERNAME,)
+        ).fetchone()
+    page = client.get(f"{PANEL}/usuarios").text
+    assert f"/usuarios/{me['id']}/deshabilitar" not in page
+    assert "Mi contraseña" in page, "en su lugar, el camino a cambiarla"

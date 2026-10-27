@@ -279,13 +279,15 @@ def verify_login(conn: psycopg.Connection, username: str, password: str) -> dict
 
 
 def disable_user(conn: psycopg.Connection, user_id: str) -> None:
+    """Deshabilita a un usuario común. Un superAdmin no se deshabilita desde acá."""
     with conn.cursor() as cur:
-        cur.execute(
-            "UPDATE users SET disabled_at = now() WHERE id = %s AND role <> 'superadmin'",
-            (user_id,),
-        )
-        if cur.rowcount == 0:
-            raise AuthDbError("No existe el usuario, o es el superAdmin.")
+        cur.execute("SELECT role FROM users WHERE id = %s", (user_id,))
+        row = cur.fetchone()
+        if row is None:
+            raise AuthDbError("No existe el usuario.")
+        if row["role"] == "superadmin":
+            raise AuthDbError("Un superAdmin no se puede deshabilitar desde el panel.")
+        cur.execute("UPDATE users SET disabled_at = now() WHERE id = %s", (user_id,))
     conn.commit()
 
 

@@ -54,6 +54,7 @@ S8. "Verificar las rutas para que no se pise el front de la API/MCP"
 | T8 | S1, S8 | Colisión de rutas + `/ui` → `/auth/panel` + borrar la SPA vieja | `refactor(ui): ...` |
 | T9 | S1–S8 | Documentación y bitácora | `docs(ui): ...` |
 | T10 | — | Verificación integral y review nativo | `chore(review): ...` |
+| T11 | S5 | No poder auto-deshabilitarse (feedback de diseño) | `fix(ui): ...` |
 
 ## Log
 
@@ -105,3 +106,22 @@ L5. Estado por spec al cerrar la implementación:
 L6. Verificación: 87 tests verdes y 26 comprobaciones en vivo contra el
     contenedor `lake-api` (login, link, activación, temporal, cambio forzado,
     reset, keys, rotación, revocación, deshabilitado, docs y API intactas).
+
+L7. Feedback de diseño sobre `/auth/panel/usuarios`, textual:
+
+> Como admin no quiero poder auto deshabilitarme. porque sino nunca puedo entrar de nuevo.
+
+Se abre T11: bloquear la auto-deshabilitación en el servidor y dejar de ofrecer
+el botón en la fila propia (y en cualquier superAdmin, que la base ya rechaza),
+para que la UI no prometa lo que el servidor no permite.
+
+L8. T11 cerrado. Dos capas, porque la UI sola no alcanza:
+
+    | Capa | Antes | Ahora |
+    | --- | --- | --- |
+    | servidor | dejaba pasar y la base fallaba con "No existe el usuario, o es el superAdmin" | 400 "No podés deshabilitar tu propia cuenta." |
+    | base | mismo mensaje confuso para cualquier caso | "No existe el usuario." / "Un superAdmin no se puede deshabilitar desde el panel." |
+    | UI | botón presente en la fila propia y en superAdmins | fila propia → "tu cuenta" + "Mi contraseña"; superAdmin → sin botón |
+
+    Verificado en vivo: auto-deshabilitado 400 y la cuenta sigue activa con la
+    sesión intacta; otro superAdmin 400; un `user` común 200. 89 tests verdes.

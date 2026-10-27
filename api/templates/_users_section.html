@@ -77,6 +77,10 @@
             {% else %}<span class="badge ok">activo</span>{% endif %}
           </td>
           <td class="actions">
+            {% if u.id|string == user.id|string %}
+              <span class="hint" style="margin-right:8px">tu cuenta</span>
+              <a class="btn small" href="/auth/panel/password">Mi contraseña</a>
+            {% else %}
             <button class="small" hx-post="/auth/panel/usuarios/{{ u.id }}/reset"
                     hx-vals='{"mode": "link"}'
                     hx-target="#seccion-usuarios" hx-swap="outerHTML"
@@ -85,10 +89,11 @@
                     hx-vals='{"mode": "random"}'
                     hx-target="#seccion-usuarios" hx-swap="outerHTML"
                     hx-confirm="¿Resetear con contraseña temporal? Cierra sus sesiones del panel.">Resetear</button>
-            {% if not u.disabled_at %}
+            {% if u.role != 'superadmin' and not u.disabled_at %}
             <button class="small danger" hx-post="/auth/panel/usuarios/{{ u.id }}/deshabilitar"
                     hx-target="#seccion-usuarios" hx-swap="outerHTML"
                     hx-confirm="¿Deshabilitar? Corta sesión, keys y JWT en el acto.">Deshabilitar</button>
+            {% endif %}
             {% endif %}
           </td>
         </tr>
@@ -102,6 +107,7 @@
 
   <p class="hint">
     El reset corta las sesiones del panel del usuario; sus API keys siguen funcionando.
-    Deshabilitar corta todo y no se puede deshacer desde acá.
+    Deshabilitar corta todo y no se puede deshacer desde acá. Tu propia cuenta y las
+    de superAdmin no se deshabilitan: el panel quedaría sin nadie que lo administre.
   </p>
 </section>

@@ -532,6 +532,11 @@ def reset_password(request: Request, user_id: str, mode: str = Form("link")) -> 
 @router.post("/usuarios/{user_id}/deshabilitar")
 def disable_user(request: Request, user_id: str) -> Response:
     user = _require_superadmin(request)
+    # Auto-deshabilitarse es quedar afuera para siempre: se corta acá, no en la UI.
+    if str(user_id) == str(user["id"]):
+        return _users_section(
+            request, user, error="No podés deshabilitar tu propia cuenta.", status_code=400
+        )
     with auth_db.connection() as conn:
         try:
             auth_db.disable_user(conn, user_id)
