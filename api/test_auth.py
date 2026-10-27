@@ -150,3 +150,30 @@ def test_zero_iterations_hash_is_rejected_not_crashing():
 
 def test_excessive_iterations_hash_is_rejected_without_hanging():
     assert auth.verify_password("pbkdf2_sha256$1000000000$salt$deadbeef", "x") is False
+
+
+def test_disabling_a_user_invalidates_its_issued_jwt(client):
+    """Un JWT ya emitido no puede sobrevivir al deshabilitado del usuario.
+
+    El camino Bearer sólo verificaba firma y subject: sin este chequeo, un
+    usuario deshabilitado seguía entrando a los datos hasta que venciera el token.
+    """
+    from api import auth_db
+
+    with auth_db.connection() as conn:
+        user = auth_db.verify_login(conn, USERNAME, PASSWORD)
+    token, _ = auth.create_access_token(USERNAME)
+    headers = {"Authorization": f"Bearer {token}"}
+    assert client.get("/api/v1/tables", headers=headers).status_code == 200
+
+    with auth_db.connection() as conn:
+        auth_db.disable_user(conn, user["id"])
+    auth._USER_CACHE.clear()
+
+    assert client.get("/api/v1/tables", headers=headers).status_code == 401
+
+    # Restituye el estado para el resto de la suite.
+    with auth_db.connection() as conn:
+        conn.execute("UPDATE users SET disabled_at = NULL WHERE id = %s", (user["id"],))
+        conn.commit()
+    auth._USER_CACHE.clear()

@@ -232,6 +232,31 @@ def decode_access_token(token: str) -> dict[str, Any]:
 API_KEY_CACHE_TTL_SECONDS = 5.0
 _API_KEY_CACHE: dict[str, tuple[float, dict[str, Any] | None]] = {}
 
+# Cache de estado de usuario para el camino Bearer: sin esto, un JWT ya emitido
+# seguiría sirviendo después de deshabilitar al usuario hasta que venciera.
+_USER_CACHE_TTL_SECONDS = 5.0
+_USER_CACHE: dict[str, tuple[float, bool]] = {}
+
+
+def user_can_authenticate(username: str) -> bool:
+    """True si el usuario existe, no está deshabilitado y no es de servicio."""
+    from api import auth_db  # import local: auth_db importa este módulo
+
+    now_ts = time.time()
+    cached = _USER_CACHE.get(username)
+    if cached is not None and now_ts - cached[0] < _USER_CACHE_TTL_SECONDS:
+        return cached[1]
+    if len(_USER_CACHE) > 500:
+        _USER_CACHE.clear()
+    try:
+        with auth_db.connection() as conn:
+            row = auth_db.get_user(conn, username)
+    except Exception:  # base caída: no se autentica nada
+        return False
+    active = bool(row) and row["disabled_at"] is None and row["role"] != "service"
+    _USER_CACHE[username] = (now_ts, active)
+    return active
+
 
 def _matches_any_api_key(candidate: str, keys: Iterable[str]) -> bool:
     valid = False
@@ -277,6 +302,8 @@ def subject_from_headers(headers: Mapping[str, str]) -> str:
         subject = str(claims.get("sub") or "").strip()
         if not subject:
             raise AuthError("Token inválido: falta el claim 'sub'.")
+        if not user_can_authenticate(subject):
+            raise AuthError("Usuario deshabilitado o inexistente.")
         return f"jwt:{subject}"
 
     if api_key:
