@@ -68,8 +68,11 @@ PUBLIC_PATHS: tuple[str, ...] = (
     "/redoc",
     "/openapi.json",
     "/auth/token",
-    # Panel: la página y sus endpoints se autentican por cookie de sesión, no
-    # por API key. La protección de cada ruta vive en `api/auth_ui.py`.
+    # Panel: se autentica por cookie de sesión, no por API key. La protección
+    # de cada ruta vive en `api/auth_panel.py`.
+    "/auth/panel",
+    "/static",
+    # Ruta vieja del panel: sólo redirige a /auth/panel.
     "/ui",
 )
 

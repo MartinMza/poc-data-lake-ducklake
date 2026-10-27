@@ -7,13 +7,14 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
 
-from fastapi import FastAPI, HTTPException, Query, status
+from fastapi import FastAPI, HTTPException, Query, Request, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.openapi.utils import get_openapi
-from fastapi.responses import FileResponse, RedirectResponse
+from fastapi.responses import JSONResponse, PlainTextResponse, RedirectResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from api import auth, auth_db, auth_ui, engine
+from api import auth, auth_db, auth_panel, engine
 from api.mcp_server import mcp
 
 logger = logging.getLogger("dulse.auth")
@@ -34,7 +35,7 @@ async def lifespan(app: FastAPI):
         if state["setup_token"]:
             logger.warning("[auth] %s", "=" * 66)
             logger.warning("[auth] PRIMER ARRANQUE: todavía no hay superAdmin.")
-            logger.warning("[auth] Abrí http://localhost:8000/ui y cargá este token:")
+            logger.warning("[auth] Abrí http://localhost:8000/auth/panel/configuracion y cargá este token:")
             logger.warning("[auth] SETUP TOKEN: %s", state["setup_token"])
             logger.warning(
                 "[auth] vence en %s minutos y sirve una sola vez.",
@@ -51,7 +52,7 @@ app = FastAPI(
     description=(
         "API REST y servidor MCP para consultar la data cargada desde SQL Server "
         "en el DuckLake (esquema bronze, tablas mssql_*, con Time Travel). "
-        "El panel de credenciales está en /ui."
+        "El panel de acceso está en /auth/panel."
     ),
 )
 
@@ -71,19 +72,31 @@ app.add_middleware(
 # Montar servidor FastMCP con transporte SSE bajo /mcp
 app.mount("/mcp", mcp.http_app(transport="sse"))
 
-# Panel de credenciales: página única sin build + endpoints de sesión.
-app.include_router(auth_ui.public_router)
-app.include_router(auth_ui.private_router)
+# Panel de acceso: HTML server-side (Jinja2) + fragmentos HTMX.
+app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
+app.include_router(auth_panel.router)
+
+
+@app.exception_handler(auth_panel.SessionRequired)
+def _needs_login(request: Request, exc: auth_panel.SessionRequired) -> RedirectResponse:
+    return RedirectResponse(auth_panel.ENTRY_PATH, status_code=status.HTTP_303_SEE_OTHER)
+
+
+@app.exception_handler(auth_panel.PasswordChangeRequired)
+def _needs_password_change(request: Request, exc: auth_panel.PasswordChangeRequired) -> RedirectResponse:
+    return RedirectResponse(auth_panel.PASSWORD_PATH, status_code=status.HTTP_303_SEE_OTHER)
+
+
+@app.exception_handler(PermissionError)
+def _forbidden(request: Request, exc: PermissionError) -> PlainTextResponse:
+    return PlainTextResponse("Sólo el superAdmin puede hacer esto.", status_code=status.HTTP_403_FORBIDDEN)
 
 
 @app.get("/ui", include_in_schema=False)
-def ui_panel() -> FileResponse:
-    return FileResponse(STATIC_DIR / "authui.html")
-
-
 @app.get("/ui/", include_in_schema=False)
-def ui_panel_slash() -> FileResponse:
-    return FileResponse(STATIC_DIR / "authui.html")
+def legacy_ui_redirect() -> RedirectResponse:
+    """La ruta vieja sobrevive como redirección permanente."""
+    return RedirectResponse("/auth/panel", status_code=status.HTTP_308_PERMANENT_REDIRECT)
 
 
 class TokenRequest(BaseModel):

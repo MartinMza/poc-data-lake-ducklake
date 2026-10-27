@@ -1,0 +1,29 @@
+{% extends "base.html" %}
+{% block title %}Entrar{% endblock %}
+{% block mainclass %}narrow{% endblock %}
+{% block body %}
+<h1>Entrar al panel</h1>
+<p class="lead">Credenciales de acceso al Data Lake: usuarios, contraseñas y API keys.</p>
+
+{% if error %}<div class="alert error">{{ error }}</div>{% endif %}
+{% if done %}<div class="alert ok">{{ done }}</div>{% endif %}
+
+<div class="card">
+  <form method="post" action="/auth/panel/entrar">
+    <div class="field">
+      <label for="username">Usuario</label>
+      <input id="username" name="username" type="text" autocomplete="username"
+             value="{{ username or '' }}" autofocus required>
+    </div>
+    <div class="field">
+      <label for="password">Contraseña</label>
+      <input id="password" name="password" type="password" autocomplete="current-password" required>
+    </div>
+    <button class="primary" type="submit">Entrar</button>
+  </form>
+</div>
+
+<p class="hint">
+  ¿Te pasaron un link de activación? Abrilo tal cual: ahí definís tu contraseña.
+</p>
+{% endblock %}

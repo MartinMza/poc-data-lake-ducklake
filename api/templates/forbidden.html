@@ -1,0 +1,8 @@
+{% extends "base.html" %}
+{% block title %}Sin permiso{% endblock %}
+{% block mainclass %}narrow{% endblock %}
+{% block body %}
+<h1>Sin permiso</h1>
+<div class="alert error">{{ message }}</div>
+<p><a href="/auth/panel">Volver a mis API keys</a></p>
+{% endblock %}

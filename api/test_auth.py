@@ -31,11 +31,11 @@ def test_docs_are_public(client):
     assert client.get("/openapi.json").status_code == 200
 
 
-def test_panel_page_is_public(client):
-    """La página del panel tiene que cargar sin credenciales."""
-    response = client.get("/ui")
+def test_panel_login_page_is_public(client):
+    """La página de entrada del panel carga sin credenciales."""
+    response = client.get("/auth/panel/entrar")
     assert response.status_code == 200
-    assert "Credenciales" in response.text
+    assert "Entrar al panel" in response.text
 
 
 def test_protected_route_without_credentials_is_401(client):

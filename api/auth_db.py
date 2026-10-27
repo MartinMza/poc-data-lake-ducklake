@@ -582,7 +582,7 @@ def session_user(conn: psycopg.Connection, token: str) -> dict[str, Any] | None:
     with conn.cursor() as cur:
         cur.execute(
             """
-            SELECT u.id, u.username, u.role
+            SELECT u.id, u.username, u.role, u.must_change_password
               FROM sessions s JOIN users u ON u.id = s.user_id
              WHERE s.token_sha256 = %s AND s.expires_at > now() AND u.disabled_at IS NULL
             """,

@@ -1,0 +1,27 @@
+{% extends "base.html" %}
+{% block title %}Activar cuenta{% endblock %}
+{% block mainclass %}narrow{% endblock %}
+{% block body %}
+<h1>Activá tu cuenta</h1>
+<p class="lead">
+  Hola <strong>{{ username }}</strong>. Definí la contraseña con la que vas a entrar
+  al panel. Este link sirve una sola vez.
+</p>
+
+{% if error %}<div class="alert error">{{ error }}</div>{% endif %}
+
+<div class="card">
+  <form method="post" action="/auth/panel/activar/{{ token }}">
+    <div class="field">
+      <label for="password">Contraseña (mínimo {{ min_password }} caracteres)</label>
+      <input id="password" name="password" type="password" autocomplete="new-password"
+             autofocus required>
+    </div>
+    <div class="field">
+      <label for="password2">Repetir contraseña</label>
+      <input id="password2" name="password2" type="password" autocomplete="new-password" required>
+    </div>
+    <button class="primary" type="submit">Guardar y entrar</button>
+  </form>
+</div>
+{% endblock %}

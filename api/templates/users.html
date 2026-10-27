@@ -1,0 +1,9 @@
+{% extends "base.html" %}
+{% block title %}Usuarios{% endblock %}
+{% block body %}
+<h1>Usuarios</h1>
+<p class="lead">
+  Quién puede entrar al panel y con qué rol. Sólo el superAdmin ve esta sección.
+</p>
+{% include "_users_section.html" %}
+{% endblock %}
