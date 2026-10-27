@@ -2,20 +2,17 @@
 
 from __future__ import annotations
 
-import os
 import time
 
 import pytest
 from fastapi.testclient import TestClient
 
-os.environ["AUTH_API_KEYS"] = "test-key-1,test-key-2"
-os.environ["AUTH_JWT_SECRET"] = "test-jwt-secret-0123456789abcdef0123456789abcdef"
-os.environ["AUTH_USERS"] = "admin:test-password,ops:test-password-2"
+from api import auth
+from api.main import app
 
-from api import auth  # noqa: E402
-from api.main import app  # noqa: E402
-
-VALID_KEY = "test-key-1"
+# Las credenciales de prueba (`AUTH_API_KEYS`, `AUTH_JWT_SECRET`, `AUTH_USERS`) se
+# definen en `api/conftest.py`: acá sólo se referencian.
+VALID_KEY = "test-key-00000000000000001"
 
 
 @pytest.fixture(scope="module")
@@ -146,3 +143,43 @@ def test_unicode_pbkdf2_password_roundtrip():
     stored = auth.hash_password("contraseña-ñandú", iterations=1000)
     assert auth.verify_password(stored, "contraseña-ñandú") is True
     assert auth.verify_password(stored, "otra") is False
+
+
+def test_zero_iterations_hash_is_rejected_not_crashing():
+    """Iteraciones 0 hacen que pbkdf2_hmac lance ValueError: debe ser credencial
+    inválida (401), nunca una excepción sin capturar (500)."""
+    assert auth.verify_password("pbkdf2_sha256$0$salt$deadbeef", "x") is False
+    assert auth.verify_password("pbkdf2_sha256$-5$salt$deadbeef", "x") is False
+
+
+def test_excessive_iterations_hash_is_rejected_without_hanging():
+    """Un AUTH_USERS con iteraciones enormes colgaría el worker en cada login:
+    se rechaza antes de derivar la clave."""
+    assert auth.verify_password("pbkdf2_sha256$1000000000$salt$deadbeef", "x") is False
+
+
+def test_zero_iterations_login_is_401_not_500(client, monkeypatch):
+    monkeypatch.setattr(
+        auth, "users", lambda: {"admin": "pbkdf2_sha256$0$salt$deadbeef"}
+    )
+    response = client.post(
+        "/auth/token", json={"username": "admin", "password": "x"}
+    )
+    assert response.status_code == 401
+
+
+def test_short_api_key_fails_closed(monkeypatch):
+    """Una API key corta (placeholder tipo 'cambiame') no habilita el servicio."""
+    monkeypatch.setattr(auth, "api_keys", lambda: ("cambiame",))
+    monkeypatch.setattr(auth, "users", lambda: {})
+    with pytest.raises(RuntimeError, match="demasiado corta"):
+        auth.assert_configured()
+
+
+def test_malformed_users_entry_fails_closed(monkeypatch):
+    """Una entrada de AUTH_USERS sin separador se descartaba en silencio:
+    ahora el arranque falla nombrando el problema."""
+    monkeypatch.setenv("AUTH_USERS", "admin:un-password,sin-separador")
+    monkeypatch.setattr(auth, "api_keys", lambda: ())
+    with pytest.raises(RuntimeError, match="entrada inválida"):
+        auth.assert_configured()

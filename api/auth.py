@@ -49,6 +49,15 @@ JWT_ALGORITHM = "HS256"
 PBKDF2_PREFIX = "pbkdf2_sha256"
 PBKDF2_ITERATIONS = 260_000
 
+# Piso de entropía para una API key usada como credencial de servicio. Un valor
+# tipo "cambiame" pasaba el chequeo de presencia y habilitaba el servicio.
+MIN_API_KEY_LENGTH = 24
+
+# Techo defensivo de iteraciones PBKDF2: el valor viene del hash guardado en
+# AUTH_USERS y se usa para derivar en cada login. Un typo (10**9) bloqueaba el
+# worker minutos por intento.
+MAX_PBKDF2_ITERATIONS = 1_000_000
+
 # Rutas que no requieren credenciales: salud (healthcheck de Docker), raíz,
 # documentación y el propio emisor de tokens.
 PUBLIC_PATHS: tuple[str, ...] = (
@@ -110,13 +119,29 @@ def jwt_ttl_minutes() -> int:
 
 
 def assert_configured() -> None:
-    """Fail-closed: sin credenciales no hay servicio."""
-    if not api_keys() and not users():
+    """Fail-closed: sin credenciales utilizables no hay servicio."""
+    keys = api_keys()
+    configured_users = users()
+    if not keys and not configured_users:
         raise RuntimeError(
             "Auth sin configurar: definí AUTH_API_KEYS (API keys) y/o AUTH_USERS "
             "(usuarios JWT) en el entorno o en .env."
         )
-    if users() and not jwt_secret():
+    # Una entrada mal formada se descartaba en silencio y el usuario "no existía".
+    for entry in _split_list(env(USERS_ENV)):
+        username, separator, secret = entry.partition(":")
+        if not separator or not username.strip() or not secret.strip():
+            raise RuntimeError(
+                f"AUTH_USERS tiene una entrada inválida ({entry!r}): "
+                "el formato es usuario:secreto."
+            )
+    for key in keys:
+        if len(key) < MIN_API_KEY_LENGTH:
+            raise RuntimeError(
+                f"API key demasiado corta ({len(key)} caracteres): usá al menos "
+                f"{MIN_API_KEY_LENGTH} (openssl rand -hex 24)."
+            )
+    if configured_users and not jwt_secret():
         raise RuntimeError(
             "AUTH_USERS está definido pero falta AUTH_JWT_SECRET para firmar los JWT."
         )
@@ -149,6 +174,10 @@ def verify_password(stored: str, provided: str) -> bool:
         _, iterations_raw, salt, expected = stored.split("$", 3)
         iterations = int(iterations_raw)
     except ValueError:
+        return False
+    # pbkdf2_hmac lanza ValueError con iteraciones <= 0 (sería un 500) y un valor
+    # enorme bloquea el worker: ambos son configuración inválida, no credencial.
+    if not 0 < iterations <= MAX_PBKDF2_ITERATIONS:
         return False
     derived = hashlib.pbkdf2_hmac(
         "sha256", provided.encode("utf-8"), salt.encode("utf-8"), iterations

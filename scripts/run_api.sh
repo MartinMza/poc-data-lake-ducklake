@@ -36,10 +36,9 @@ if [[ -n "${AUTH_USERS:-}" && -z "${AUTH_JWT_SECRET:-}" ]]; then
   echo "ERROR: AUTH_USERS está definido pero falta AUTH_JWT_SECRET (openssl rand -hex 32)." >&2
   exit 1
 fi
-AUTH_KEY_HINT="${AUTH_API_KEYS:-}${AUTH_API_KEYS:+,}"
-AUTH_KEY_HINT="${AUTH_KEY_HINT%%,*}"
-if [[ -n "$AUTH_KEY_HINT" ]]; then
-  AUTH_HINT="header X-API-Key: ${AUTH_KEY_HINT:0:12}…"
+# Sin mostrar el valor: el arranque escribe en consola y en los logs de compose.
+if [[ -n "${AUTH_API_KEYS:-}" ]]; then
+  AUTH_HINT="API key configurada (header X-API-Key: <tu-key>)"
 else
   AUTH_HINT="POST /auth/token (usuarios de AUTH_USERS)"
 fi

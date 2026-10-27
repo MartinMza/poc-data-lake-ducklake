@@ -111,3 +111,20 @@ queda como triage posterior.
 Nota de herramienta: la recovery `scope_changed` no ejecuta por el facade
 (lee STATUS sin los selectores `baseRef`/`committedOnly`); se corrió el comando
 nativo renderizado por el provider.
+
+## Deuda posterior al review (avisos informacionales)
+
+Triage de los avisos que no bloquearon, con lo que quedó hecho y lo que queda:
+
+| Aviso | Estado |
+|---|---|
+| `api/auth.py` iteraciones PBKDF2 sin rango | **corregido** (`8339c8f..` + commit de fixes): 0 daba 500, 10**9 colgaba ~200 s |
+| `api/auth.py` `assert_configured` sólo presencia | **corregido**: mínimo 24 chars por key; entrada de `AUTH_USERS` sin `:` ahora falla el arranque |
+| `scripts/run_api.sh` imprimía 12 chars de la key | **corregido**: no muestra ningún fragmento del secreto |
+| `scripts/hash_password.py --password` por argv | **corregido**: `--password-stdin` |
+| `api/main.py` `/auth/token` público sin límite de intentos | **pendiente, requiere decisión**: fixed-window en memoria vs. proxy vs. lockout por usuario. Mientras tanto, el PBKDF2 (260k) actúa como costo por intento |
+| `scripts/container_init.sh:130` default de `MSSQL_TABLES` | **pendiente, sin acción**: duplica la lista de `orchestration/flow.py`; riesgo de drift, no bug |
+
+Nota: `docs/findings.md` llega truncado desde el commit original `2961082`
+(contiene la cadena `…[truncated 2086 chars]` literal). Daño pre-existente; el
+texto original no está disponible en el repo, así que no se reconstruye.

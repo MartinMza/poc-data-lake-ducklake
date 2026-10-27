@@ -3,7 +3,10 @@
 
 Uso:
     api/.venv/bin/python scripts/hash_password.py            # pide el password
-    api/.venv/bin/python scripts/hash_password.py --password 'mi-password'
+    echo 'mi-password' | api/.venv/bin/python scripts/hash_password.py --password-stdin
+
+El password nunca se pasa por argumento: quedaría en el `history` del shell y
+visible en `ps` para otros usuarios del host.
 
 El valor impreso se pega en `.env` como:
     AUTH_USERS="admin:pbkdf2_sha256$<iteraciones>$<salt>$<hash>"
@@ -24,7 +27,11 @@ from api.auth import hash_password  # noqa: E402
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Hash PBKDF2 para AUTH_USERS")
-    parser.add_argument("--password", default=None, help="password a hashear (si se omite, se pide por consola)")
+    parser.add_argument(
+        "--password-stdin",
+        action="store_true",
+        help="lee el password de stdin (para automatización, evita argv)",
+    )
     parser.add_argument(
         "--iterations",
         type=int,
@@ -33,8 +40,9 @@ def main(argv: list[str] | None = None) -> int:
     )
     args = parser.parse_args(argv)
 
-    password = args.password
-    if password is None:
+    if args.password_stdin:
+        password = sys.stdin.readline().rstrip("\n")
+    else:
         password = getpass.getpass("Password: ")
         if password != getpass.getpass("Repetir password: "):
             print("Los passwords no coinciden.", file=sys.stderr)
