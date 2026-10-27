@@ -76,3 +76,34 @@ Notas de ejecución:
   `bronze/*.py` que el writer sí alcanzó a dejar y fueron revisados aquí.
 - Las bases de prueba de SQL Server (`RestoredProof`, `TestBakSource`) se
   dropearon: en la instancia queda solo `FAF12_Kavos`.
+
+## Review nativo (RDD)
+
+Candidatos revisados como work-unit commits, con `baseRef` + `committedOnly`
+(el rango completo de 4 commits excede el presupuesto de contexto del provider:
+`lens_context_budget_exceeded`, sin autoridad creada).
+
+| Slice | Lineage | Veredicto | Hallazgos |
+|---|---|---|---|
+| Docs (`053fe23`) | `review-0652740d3478315e` | approved, quemado | ninguno |
+| Auth (`8339c8f`) | `review-d6cc0681bca63e4b` → `review-aaa23e1a6020f34e` | approved, quemado | 3 corregidos + 5 avisos informacionales |
+| Limpieza (`fb41cc9`) | — | **pendiente** | — |
+| API/MCP (`15812b1`) | — | **pendiente** (cubierto por 16 tests) | — |
+
+Hallazgos que abrieron corrección (los tres reales, los tres corregidos):
+
+1. `R1-secret-example-credentials` (CRITICAL): `.env.example` traía credenciales
+   usables + el `AUTH_JWT_SECRET`; copiarlo a `.env` dejaba la auth bypasseable.
+   Fix: plantilla vacía + generación en `setup.sh`.
+2. `R3-unicode-compare-500` (BLOCKER): `hmac.compare_digest` con `str` no-ASCII
+   lanzaba `TypeError` (500 en vez de 401). Fix: comparación sobre bytes UTF-8.
+3. `R3-setup-auth-persist` (BLOCKER): el `sed` sólo reescribía una línea
+   existente, así que un `.env` previo quedaba sin credencial pese al mensaje de
+   éxito. Fix: `set_env_value` (append si falta) + verificación que falla ruidosa.
+
+Avisos informacionales no bloqueantes: `api/main.py:89`, `api/auth.py:154`,
+`api/auth.py:115`, `scripts/run_api.sh:43`, `scripts/hash_password.py:27`.
+
+Nota de herramienta: la recovery `scope_changed` no ejecuta por el facade
+(lee STATUS sin los selectores `baseRef`/`committedOnly`); se corrió el comando
+nativo renderizado por el provider.
