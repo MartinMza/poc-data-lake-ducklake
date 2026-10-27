@@ -71,6 +71,12 @@ CREATE TABLE IF NOT EXISTS sessions (
     expires_at timestamptz NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS meta (
+    key text PRIMARY KEY,
+    value text NOT NULL,
+    created_at timestamptz NOT NULL DEFAULT now()
+);
+
 CREATE TABLE IF NOT EXISTS setup_tokens (
     id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
     token_sha256 text NOT NULL UNIQUE,
@@ -440,3 +446,108 @@ def purge_expired(conn: psycopg.Connection) -> None:
         cur.execute("DELETE FROM sessions WHERE expires_at < now()")
         cur.execute("DELETE FROM setup_tokens WHERE expires_at < now() - interval '1 day'")
     conn.commit()
+
+
+# --- arranque ---------------------------------------------------------------
+
+LEGACY_MIGRATED_KEY = "legacy_env_migrated"
+SERVICE_USERNAME = "service"
+LEGACY_KEY_DAYS = 180
+
+
+def migrate_legacy_env(conn: psycopg.Connection) -> list[str]:
+    """Importa `AUTH_USERS`/`AUTH_API_KEYS` del entorno a la base, una sola vez.
+
+    Existe para no dejar a nadie afuera al cambiar la fuente de verdad: las
+    credenciales que hoy viven en `.env` pasan a la base y se siguen usando. Una
+    vez migradas, el entorno deja de leerse.
+    """
+    notes: list[str] = []
+    with conn.cursor() as cur:
+        cur.execute("SELECT 1 FROM meta WHERE key = %s", (LEGACY_MIGRATED_KEY,))
+        if cur.fetchone() is not None:
+            return notes
+
+    legacy_users = auth.users()
+    legacy_keys = auth.api_keys()
+    if not legacy_users and not legacy_keys:
+        return notes
+
+    for username, secret in legacy_users.items():
+        password_hash = (
+            secret if secret.startswith(f"{PBKDF2_PREFIX}$") else auth.hash_password(secret)
+        )
+        role = "user" if has_superadmin(conn) else "superadmin"
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                INSERT INTO users (username, password_hash, role)
+                VALUES (%s, %s, %s) ON CONFLICT (username) DO NOTHING
+                """,
+                (username, password_hash, role),
+            )
+        notes.append(f"usuario {username!r} importado del entorno (rol {role})")
+
+    if legacy_keys:
+        service_id = _ensure_service_user(conn)
+        for index, key in enumerate(legacy_keys, start=1):
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    INSERT INTO api_keys (user_id, label, visible_prefix, key_sha256, expires_at)
+                    VALUES (%s, %s, %s, %s, now() + %s * interval '1 day')
+                    ON CONFLICT (key_sha256) DO NOTHING
+                    """,
+                    (
+                        service_id,
+                        f"migrada del entorno #{index}",
+                        visible_prefix(key),
+                        hash_api_key(key),
+                        LEGACY_KEY_DAYS,
+                    ),
+                )
+        notes.append(
+            f"{len(legacy_keys)} API key(s) del entorno importadas al usuario "
+            f"{SERVICE_USERNAME!r} con {LEGACY_KEY_DAYS} días de vigencia"
+        )
+
+    with conn.cursor() as cur:
+        cur.execute(
+            "INSERT INTO meta (key, value) VALUES (%s, now()::text) ON CONFLICT (key) DO NOTHING",
+            (LEGACY_MIGRATED_KEY,),
+        )
+    conn.commit()
+    return notes
+
+
+def _ensure_service_user(conn: psycopg.Connection) -> str:
+    """Usuario sintético dueño de las keys migradas: no puede loguearse."""
+    with conn.cursor() as cur:
+        cur.execute("SELECT id FROM users WHERE username = %s", (SERVICE_USERNAME,))
+        row = cur.fetchone()
+        if row is not None:
+            return row["id"]
+        cur.execute(
+            """
+            INSERT INTO users (username, password_hash, role)
+            VALUES (%s, %s, 'service')
+            ON CONFLICT (username) DO UPDATE SET role = 'service'
+            RETURNING id
+            """,
+            (SERVICE_USERNAME, auth.hash_password(secrets.token_urlsafe(32))),
+        )
+        return cur.fetchone()["id"]
+
+
+def bootstrap() -> dict[str, Any]:
+    """Prepara la base al arrancar. Devuelve el estado para el log."""
+    try:
+        with connection() as conn:
+            ensure_schema(conn)
+            purge_expired(conn)
+            notes = migrate_legacy_env(conn)
+            needs_setup = not has_superadmin(conn)
+            setup_token = issue_setup_token(conn) if needs_setup else None
+        return {"available": True, "needs_setup": needs_setup, "setup_token": setup_token, "notes": notes}
+    except psycopg.Error as exc:
+        return {"available": False, "error": str(exc), "needs_setup": False, "setup_token": None, "notes": []}

@@ -2,28 +2,58 @@
 
 from __future__ import annotations
 
+import logging
+from contextlib import asynccontextmanager
+from pathlib import Path
 from typing import Any
 
 from fastapi import FastAPI, HTTPException, Query, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.openapi.utils import get_openapi
-from fastapi.responses import RedirectResponse
+from fastapi.responses import FileResponse, RedirectResponse
 from pydantic import BaseModel, Field
 
-from api import auth, engine
+from api import auth, auth_db, auth_ui, engine
 from api.mcp_server import mcp
+
+logger = logging.getLogger("dulse.auth")
+STATIC_DIR = Path(__file__).resolve().parent / "static"
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Arranque: valida el secreto JWT y prepara la base de credenciales."""
+    auth.assert_configured()
+    state = auth_db.bootstrap()
+    if not state["available"]:
+        logger.error("[auth] base de credenciales no disponible: %s", state.get("error"))
+        logger.error("[auth] sin base no se autentica ninguna request de datos.")
+    else:
+        for note in state["notes"]:
+            logger.warning("[auth] migración: %s", note)
+        if state["setup_token"]:
+            logger.warning("[auth] %s", "=" * 66)
+            logger.warning("[auth] PRIMER ARRANQUE: todavía no hay superAdmin.")
+            logger.warning("[auth] Abrí http://localhost:8000/ui y cargá este token:")
+            logger.warning("[auth] SETUP TOKEN: %s", state["setup_token"])
+            logger.warning(
+                "[auth] vence en %s minutos y sirve una sola vez.",
+                auth_db.SETUP_TOKEN_TTL_MINUTES,
+            )
+            logger.warning("[auth] %s", "=" * 66)
+    yield
+
 
 app = FastAPI(
     title="Dulse Data Lake API & MCP",
     version="1.0.0",
+    lifespan=lifespan,
     description=(
         "API REST y servidor MCP para consultar la data cargada desde SQL Server "
-        "en el DuckLake (esquema bronze, tablas mssql_*, con Time Travel)."
+        "en el DuckLake (esquema bronze, tablas mssql_*, con Time Travel). "
+        "El panel de credenciales está en /ui."
     ),
 )
-
-# Fail-closed: sin credenciales configuradas el servicio no arranca.
-auth.assert_configured()
 
 # Auth envuelve TODO (rutas REST + sub-app MCP en /mcp). Se agrega antes que
 # CORS para que CORS quede por fuera y los 401 también lleven sus headers.
@@ -40,6 +70,20 @@ app.add_middleware(
 
 # Montar servidor FastMCP con transporte SSE bajo /mcp
 app.mount("/mcp", mcp.http_app(transport="sse"))
+
+# Panel de credenciales: página única sin build + endpoints de sesión.
+app.include_router(auth_ui.public_router)
+app.include_router(auth_ui.private_router)
+
+
+@app.get("/ui", include_in_schema=False)
+def ui_panel() -> FileResponse:
+    return FileResponse(STATIC_DIR / "authui.html")
+
+
+@app.get("/ui/", include_in_schema=False)
+def ui_panel_slash() -> FileResponse:
+    return FileResponse(STATIC_DIR / "authui.html")
 
 
 class TokenRequest(BaseModel):

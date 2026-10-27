@@ -1,0 +1,270 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Dulse — Credenciales</title>
+<style>
+  :root { --bg:#0f1419; --card:#182027; --ink:#e8eef4; --muted:#93a4b3; --line:#26323c;
+          --accent:#3ea6ff; --ok:#31c48d; --warn:#f5a524; --err:#f26d6d; --radius:10px; }
+  * { box-sizing: border-box; }
+  body { margin:0; font:16px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif;
+         background:var(--bg); color:var(--ink); padding:24px 16px 64px; }
+  main { max-width:860px; margin:0 auto; display:flex; flex-direction:column; gap:20px; }
+  h1 { font-size:20px; margin:0; }
+  h2 { font-size:15px; margin:0 0 12px; color:var(--muted); text-transform:uppercase;
+       letter-spacing:.08em; font-weight:600; }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:var(--radius); padding:20px; }
+  label { display:block; font-size:13px; color:var(--muted); margin-bottom:6px; }
+  input, select, button { font:inherit; border-radius:8px; }
+  input, select { width:100%; padding:10px 12px; background:#0d1216; color:var(--ink);
+                  border:1px solid var(--line); margin-bottom:14px; }
+  input:focus, select:focus { outline:2px solid var(--accent); outline-offset:1px; }
+  button { padding:10px 16px; border:1px solid var(--line); background:#1e2a33; color:var(--ink);
+           cursor:pointer; }
+  button:hover { border-color:var(--accent); }
+  button.primary { background:var(--accent); color:#04121d; border-color:var(--accent); font-weight:600; }
+  button.danger { color:var(--err); }
+  button.small { padding:6px 10px; font-size:13px; }
+  .row { display:flex; gap:10px; flex-wrap:wrap; align-items:flex-end; }
+  .row > * { flex:1 1 160px; }
+  table { width:100%; border-collapse:collapse; font-size:14px; }
+  th, td { text-align:left; padding:9px 8px; border-bottom:1px solid var(--line); vertical-align:middle; }
+  th { color:var(--muted); font-weight:600; font-size:12px; text-transform:uppercase; letter-spacing:.06em; }
+  code { background:#0d1216; padding:2px 6px; border-radius:6px; font-size:13px; }
+  .muted { color:var(--muted); font-size:13px; }
+  .msg { padding:10px 12px; border-radius:8px; margin-bottom:12px; font-size:14px; display:none; }
+  .msg.show { display:block; }
+  .msg.err { background:#3a1d1d; border:1px solid var(--err); }
+  .msg.ok { background:#16302a; border:1px solid var(--ok); }
+  .banner { background:#16302a; border:1px solid var(--ok); border-radius:var(--radius); padding:16px; }
+  .banner code { display:block; margin:10px 0; padding:12px; font-size:15px; word-break:break-all; }
+  .hidden { display:none !important; }
+  .pill { font-size:12px; padding:2px 8px; border-radius:999px; border:1px solid var(--line); }
+  .pill.on { color:var(--ok); border-color:var(--ok); }
+  .pill.off { color:var(--muted); }
+  header.bar { display:flex; justify-content:space-between; align-items:center; gap:12px; }
+</style>
+</head>
+<body>
+<main>
+  <header class="bar">
+    <h1>Dulse · Credenciales</h1>
+    <div id="who" class="muted hidden"></div>
+  </header>
+
+  <div id="msg" class="msg"></div>
+
+  <!-- 1. Primer arranque -->
+  <section id="setup" class="card hidden">
+    <h2>Primera configuración</h2>
+    <p class="muted">Todavía no existe un superAdmin. El token está en el log del
+      servicio (buscá <code>SETUP TOKEN</code>). Vence en 30 minutos y sirve una sola vez.</p>
+    <label for="s-token">Token de setup</label>
+    <input id="s-token" autocomplete="off" placeholder="pegalo acá">
+    <label for="s-user">Usuario del superAdmin</label>
+    <input id="s-user" autocomplete="username" placeholder="admin">
+    <label for="s-pass">Password (mínimo 8 caracteres)</label>
+    <input id="s-pass" type="password" autocomplete="new-password">
+    <button class="primary" onclick="doSetup()">Crear superAdmin</button>
+  </section>
+
+  <!-- 2. Login -->
+  <section id="login" class="card hidden">
+    <h2>Entrar</h2>
+    <label for="l-user">Usuario</label>
+    <input id="l-user" autocomplete="username">
+    <label for="l-pass">Password</label>
+    <input id="l-pass" type="password" autocomplete="current-password"
+           onkeydown="if(event.key==='Enter')doLogin()">
+    <button class="primary" onclick="doLogin()">Entrar</button>
+  </section>
+
+  <!-- 3. Panel -->
+  <section id="panel" class="hidden">
+    <div id="fresh-key" class="banner hidden">
+      <strong>Copiá esta API key ahora.</strong> No se vuelve a mostrar.
+      <code id="fresh-value"></code>
+      <button class="small" onclick="copyKey()">Copiar</button>
+      <button class="small" onclick="hideFresh()">Ya la guardé</button>
+    </div>
+
+    <div class="card" style="margin-top:20px">
+      <h2>Crear API key</h2>
+      <div class="row">
+        <div style="flex:2 1 240px">
+          <label for="k-label">Para qué es (opcional)</label>
+          <input id="k-label" placeholder="dashboard, script de carga…">
+        </div>
+        <div>
+          <label for="k-days">Vence en (días)</label>
+          <input id="k-days" type="number" min="1" max="180" value="90">
+        </div>
+        <div style="flex:0 0 auto">
+          <button class="primary" onclick="createKey()">Crear</button>
+        </div>
+      </div>
+      <p class="muted">Máximo 5 keys activas. Vencimiento máximo: 180 días.</p>
+    </div>
+
+    <div class="card" style="margin-top:20px">
+      <h2>Mis API keys</h2>
+      <table>
+        <thead><tr><th>Key</th><th>Para qué</th><th>Vence</th><th>Estado</th><th></th></tr></thead>
+        <tbody id="keys-body"></tbody>
+      </table>
+    </div>
+
+    <div id="users-card" class="card hidden" style="margin-top:20px">
+      <h2>Usuarios</h2>
+      <div class="row">
+        <div><label for="u-name">Usuario</label><input id="u-name" autocomplete="off"></div>
+        <div><label for="u-pass">Password (mín. 8)</label><input id="u-pass" type="password" autocomplete="new-password"></div>
+        <div style="flex:0 0 auto"><button class="primary" onclick="createUser()">Agregar</button></div>
+      </div>
+      <table style="margin-top:14px">
+        <thead><tr><th>Usuario</th><th>Rol</th><th>Keys activas</th><th></th></tr></thead>
+        <tbody id="users-body"></tbody>
+      </table>
+    </div>
+  </section>
+</main>
+
+<script>
+const $ = (id) => document.getElementById(id);
+let me = null;
+
+function msg(text, kind = "err") {
+  const el = $("msg");
+  el.textContent = text;
+  el.className = `msg show ${kind}`;
+  clearTimeout(msg._t);
+  msg._t = setTimeout(() => (el.className = "msg"), 6000);
+}
+function show(section) {
+  for (const id of ["setup", "login", "panel"]) $(id).classList.add("hidden");
+  if (section) $(section).classList.remove("hidden");
+}
+async function api(path, options = {}) {
+  const res = await fetch(`/ui/api${path}`, {
+    credentials: "same-origin",
+    headers: { "content-type": "application/json" },
+    ...options,
+  });
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(body.detail || `Error ${res.status}`);
+  return body;
+}
+
+async function refresh() {
+  const state = await api("/state");
+  if (state.needs_setup) return show("setup");
+  if (!state.authenticated) return show("login");
+  await loadPanel(state.user);
+}
+
+async function loadPanel(user) {
+  me = await api("/me");
+  $("who").textContent = `${me.user.username} · ${me.user.role}`;
+  $("who").classList.remove("hidden");
+  $("users-card").classList.toggle("hidden", me.user.role !== "superadmin");
+  renderKeys(me.keys);
+  if (me.user.role === "superadmin") renderUsers(await api("/users"));
+  show("panel");
+}
+
+function renderKeys(keys) {
+  const body = $("keys-body");
+  if (!keys.length) {
+    body.innerHTML = '<tr><td colspan="5" class="muted">Todavía no tenés ninguna.</td></tr>';
+    return;
+  }
+  body.innerHTML = keys.map((k) => {
+    const expires = new Date(k.expires_at).toLocaleDateString();
+    const label = k.label ? k.label : '<span class="muted">—</span>';
+    const pill = k.active ? '<span class="pill on">activa</span>' : '<span class="pill off">inactiva</span>';
+    const actions = k.active
+      ? `<button class="small" onclick="rotateKey('${k.id}')">Rotar</button>
+         <button class="small danger" onclick="revokeKey('${k.id}')">Revocar</button>`
+      : "";
+    return `<tr><td><code>${k.visible_prefix}…</code></td><td>${label}</td>
+            <td>${expires}</td><td>${pill}</td><td>${actions}</td></tr>`;
+  }).join("");
+}
+
+function renderUsers(users) {
+  $("users-body").innerHTML = users.map((u) => {
+    const disable = u.role === "superadmin" ? ""
+      : `<button class="small danger" onclick="disableUser('${u.id}')">Deshabilitar</button>`;
+    return `<tr><td>${u.username}</td><td>${u.role}</td><td>${u.active_keys}</td><td>${disable}</td></tr>`;
+  }).join("");
+}
+
+function showFresh(key) {
+  $("fresh-value").textContent = key;
+  $("fresh-key").classList.remove("hidden");
+}
+function hideFresh() { $("fresh-key").classList.add("hidden"); $("fresh-value").textContent = ""; }
+function copyKey() { navigator.clipboard.writeText($("fresh-value").textContent); msg("Key copiada.", "ok"); }
+
+async function doSetup() {
+  try {
+    await api("/setup", { method: "POST", body: JSON.stringify({
+      token: $("s-token").value.trim(), username: $("s-user").value.trim(), password: $("s-pass").value }) });
+    msg("SuperAdmin creado. Ya podés crear tus API keys.", "ok");
+    await refresh();
+  } catch (e) { msg(e.message); }
+}
+async function doLogin() {
+  try {
+    await api("/login", { method: "POST", body: JSON.stringify({
+      username: $("l-user").value.trim(), password: $("l-pass").value }) });
+    $("l-pass").value = "";
+    await refresh();
+  } catch (e) { msg(e.message); }
+}
+async function logout() {
+  await api("/logout", { method: "POST" });
+  $("who").classList.add("hidden");
+  show("login");
+}
+async function createKey() {
+  try {
+    const out = await api("/keys", { method: "POST", body: JSON.stringify({
+      label: $("k-label").value.trim(), expires_in_days: Number($("k-days").value) }) });
+    $("k-label").value = "";
+    showFresh(out.key);
+    await loadPanel();
+  } catch (e) { msg(e.message); }
+}
+async function rotateKey(id) {
+  try {
+    const out = await api(`/keys/${id}/rotate`, { method: "POST", body: JSON.stringify({ expires_in_days: 90 }) });
+    showFresh(out.key);
+    await loadPanel();
+  } catch (e) { msg(e.message); }
+}
+async function revokeKey(id) {
+  if (!confirm("¿Revocar esta key? Los clientes que la usen dejan de funcionar.")) return;
+  try { await api(`/keys/${id}/revoke`, { method: "POST" }); await loadPanel(); msg("Key revocada.", "ok"); }
+  catch (e) { msg(e.message); }
+}
+async function createUser() {
+  try {
+    await api("/users", { method: "POST", body: JSON.stringify({
+      username: $("u-name").value.trim(), password: $("u-pass").value }) });
+    $("u-name").value = ""; $("u-pass").value = "";
+    await loadPanel();
+    msg("Usuario creado.", "ok");
+  } catch (e) { msg(e.message); }
+}
+async function disableUser(id) {
+  if (!confirm("¿Deshabilitar este usuario? Sus keys dejan de funcionar.")) return;
+  try { await api(`/users/${id}/disable`, { method: "POST" }); await loadPanel(); }
+  catch (e) { msg(e.message); }
+}
+
+refresh().catch((e) => msg(e.message));
+</script>
+</body>
+</html>

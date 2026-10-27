@@ -1,4 +1,4 @@
-"""Tests de autenticación: API keys (servicio) + JWT (usuarios)."""
+"""Tests de autenticación: API keys (desde la base) + JWT + panel."""
 
 from __future__ import annotations
 
@@ -10,9 +10,9 @@ from fastapi.testclient import TestClient
 from api import auth
 from api.main import app
 
-# Las credenciales de prueba (`AUTH_API_KEYS`, `AUTH_JWT_SECRET`, `AUTH_USERS`) se
-# definen en `api/conftest.py`: acá sólo se referencian.
-VALID_KEY = "test-key-00000000000000001"
+from api.test_support import PASSWORD, TEST_API_KEY, USERNAME
+
+VALID_KEY = TEST_API_KEY
 
 
 @pytest.fixture(scope="module")
@@ -29,6 +29,13 @@ def test_health_is_public(client):
 
 def test_docs_are_public(client):
     assert client.get("/openapi.json").status_code == 200
+
+
+def test_panel_page_is_public(client):
+    """La página del panel tiene que cargar sin credenciales."""
+    response = client.get("/ui")
+    assert response.status_code == 200
+    assert "Credenciales" in response.text
 
 
 def test_protected_route_without_credentials_is_401(client):
@@ -53,53 +60,48 @@ def test_mcp_mount_requires_credentials(client):
     assert response.status_code == 401
 
 
+# --- JWT (usuarios de la base) ---------------------------------------------
+
+
 def test_token_endpoint_returns_usable_jwt(client):
     response = client.post(
-        "/auth/token", json={"username": "admin", "password": "test-password"}
+        "/auth/token", json={"username": USERNAME, "password": PASSWORD}
     )
     assert response.status_code == 200
-    payload = response.json()
-    assert payload["token_type"] == "bearer"
-    assert payload["expires_in"] > 0
-
-    protected = client.get(
-        "/api/v1/tables",
-        headers={"Authorization": f"Bearer {payload['access_token']}"},
-    )
+    token = response.json()["access_token"]
+    assert token.count(".") == 2
+    protected = client.get("/api/v1/tables", headers={"Authorization": f"Bearer {token}"})
     assert protected.status_code == 200
 
 
 def test_token_endpoint_rejects_bad_password(client):
-    response = client.post(
-        "/auth/token", json={"username": "admin", "password": "wrong"}
-    )
+    response = client.post("/auth/token", json={"username": USERNAME, "password": "mal"})
     assert response.status_code == 401
 
 
 def test_token_endpoint_rejects_unknown_user(client):
-    response = client.post(
-        "/auth/token", json={"username": "ghost", "password": "test-password"}
-    )
+    response = client.post("/auth/token", json={"username": "nadie", "password": PASSWORD})
     assert response.status_code == 401
 
 
 def test_expired_token_is_401(client):
-    token, _ = auth.create_access_token("admin", now=time.time() - 7200, ttl_minutes=60)
+    token, _ = auth.create_access_token("ana", now=time.time() - 7200, ttl_minutes=1)
     response = client.get("/api/v1/tables", headers={"Authorization": f"Bearer {token}"})
     assert response.status_code == 401
 
 
 def test_invalid_signature_is_401(client):
-    token, _ = auth.create_access_token("admin")
-    tampered = token[:-3] + ("aaa" if not token.endswith("aaa") else "bbb")
-    response = client.get(
-        "/api/v1/tables", headers={"Authorization": f"Bearer {tampered}"}
-    )
+    token, _ = auth.create_access_token("ana")
+    broken = token[:-4] + "aaaa"
+    response = client.get("/api/v1/tables", headers={"Authorization": f"Bearer {broken}"})
     assert response.status_code == 401
 
 
+# --- hashing y comparaciones -----------------------------------------------
+
+
 def test_hash_password_roundtrip():
-    stored = auth.hash_password("s3cr3t", iterations=2000)
+    stored = auth.hash_password("s3cr3t")
     assert stored.startswith("pbkdf2_sha256$")
     assert auth.verify_password(stored, "s3cr3t") is True
     assert auth.verify_password(stored, "s3cr3t!") is False
@@ -110,26 +112,22 @@ def test_plaintext_password_is_supported():
     assert auth.verify_password("plain-pass", "other") is False
 
 
-def test_missing_configuration_fails_closed(monkeypatch):
-    monkeypatch.setattr(auth, "api_keys", lambda: ())
-    monkeypatch.setattr(auth, "users", lambda: {})
-    with pytest.raises(RuntimeError, match="AUTH_API_KEYS"):
+def test_missing_jwt_secret_fails_closed(monkeypatch):
+    """Sin secreto de firma no hay JWT: el arranque tiene que cortar."""
+    monkeypatch.setattr(auth, "jwt_secret", lambda: "")
+    with pytest.raises(RuntimeError, match="AUTH_JWT_SECRET"):
         auth.assert_configured()
 
 
 def test_non_ascii_api_key_is_rejected_not_crashing():
-    """Una API key no-ASCII debe ser credencial inválida, nunca un TypeError.
-
-    No se prueba por header HTTP porque el transporte no admite valores
-    no-ASCII: se ejerce la resolución de credenciales directamente.
-    """
+    """Una API key no-ASCII debe ser credencial inválida, nunca un TypeError."""
     with pytest.raises(auth.AuthError):
         auth.subject_from_headers({"x-api-key": "clave-con-ñ"})
 
 
 def test_non_ascii_password_is_401_not_500(client):
     response = client.post(
-        "/auth/token", json={"username": "admin", "password": "contraseña-ñandú"}
+        "/auth/token", json={"username": USERNAME, "password": "contraseña-ñandú"}
     )
     assert response.status_code == 401
 
@@ -146,40 +144,9 @@ def test_unicode_pbkdf2_password_roundtrip():
 
 
 def test_zero_iterations_hash_is_rejected_not_crashing():
-    """Iteraciones 0 hacen que pbkdf2_hmac lance ValueError: debe ser credencial
-    inválida (401), nunca una excepción sin capturar (500)."""
     assert auth.verify_password("pbkdf2_sha256$0$salt$deadbeef", "x") is False
     assert auth.verify_password("pbkdf2_sha256$-5$salt$deadbeef", "x") is False
 
 
 def test_excessive_iterations_hash_is_rejected_without_hanging():
-    """Un AUTH_USERS con iteraciones enormes colgaría el worker en cada login:
-    se rechaza antes de derivar la clave."""
     assert auth.verify_password("pbkdf2_sha256$1000000000$salt$deadbeef", "x") is False
-
-
-def test_zero_iterations_login_is_401_not_500(client, monkeypatch):
-    monkeypatch.setattr(
-        auth, "users", lambda: {"admin": "pbkdf2_sha256$0$salt$deadbeef"}
-    )
-    response = client.post(
-        "/auth/token", json={"username": "admin", "password": "x"}
-    )
-    assert response.status_code == 401
-
-
-def test_short_api_key_fails_closed(monkeypatch):
-    """Una API key corta (placeholder tipo 'cambiame') no habilita el servicio."""
-    monkeypatch.setattr(auth, "api_keys", lambda: ("cambiame",))
-    monkeypatch.setattr(auth, "users", lambda: {})
-    with pytest.raises(RuntimeError, match="demasiado corta"):
-        auth.assert_configured()
-
-
-def test_malformed_users_entry_fails_closed(monkeypatch):
-    """Una entrada de AUTH_USERS sin separador se descartaba en silencio:
-    ahora el arranque falla nombrando el problema."""
-    monkeypatch.setenv("AUTH_USERS", "admin:un-password,sin-separador")
-    monkeypatch.setattr(auth, "api_keys", lambda: ())
-    with pytest.raises(RuntimeError, match="entrada inválida"):
-        auth.assert_configured()

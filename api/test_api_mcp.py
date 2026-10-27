@@ -22,7 +22,9 @@ from api.mcp_server import (
     sqlserver_tables as mcp_sqlserver_tables,
 )
 
-AUTH_HEADERS = {"X-API-Key": "test-key-00000000000000001"}
+from api.test_support import TEST_API_KEY  # noqa: E402
+
+AUTH_HEADERS = {"X-API-Key": TEST_API_KEY}
 
 REAL_TABLES = {
     "mssql_bs_moneda",

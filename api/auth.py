@@ -68,6 +68,9 @@ PUBLIC_PATHS: tuple[str, ...] = (
     "/redoc",
     "/openapi.json",
     "/auth/token",
+    # Panel: la página y sus endpoints se autentican por cookie de sesión, no
+    # por API key. La protección de cada ruta vive en `api/auth_ui.py`.
+    "/ui",
 )
 
 
@@ -119,31 +122,15 @@ def jwt_ttl_minutes() -> int:
 
 
 def assert_configured() -> None:
-    """Fail-closed: sin credenciales utilizables no hay servicio."""
-    keys = api_keys()
-    configured_users = users()
-    if not keys and not configured_users:
+    """Fail-closed: sin secreto de firma no hay JWT.
+
+    Desde que las credenciales viven en Postgres, lo único que sigue siendo
+    configuración de entorno es el secreto que firma los JWT.
+    """
+    if not jwt_secret():
         raise RuntimeError(
-            "Auth sin configurar: definí AUTH_API_KEYS (API keys) y/o AUTH_USERS "
-            "(usuarios JWT) en el entorno o en .env."
-        )
-    # Una entrada mal formada se descartaba en silencio y el usuario "no existía".
-    for entry in _split_list(env(USERS_ENV)):
-        username, separator, secret = entry.partition(":")
-        if not separator or not username.strip() or not secret.strip():
-            raise RuntimeError(
-                f"AUTH_USERS tiene una entrada inválida ({entry!r}): "
-                "el formato es usuario:secreto."
-            )
-    for key in keys:
-        if len(key) < MIN_API_KEY_LENGTH:
-            raise RuntimeError(
-                f"API key demasiado corta ({len(key)} caracteres): usá al menos "
-                f"{MIN_API_KEY_LENGTH} (openssl rand -hex 24)."
-            )
-    if configured_users and not jwt_secret():
-        raise RuntimeError(
-            "AUTH_USERS está definido pero falta AUTH_JWT_SECRET para firmar los JWT."
+            "Falta AUTH_JWT_SECRET: sin él no se pueden emitir ni validar los JWT "
+            "del panel y de POST /auth/token."
         )
 
 
@@ -186,12 +173,15 @@ def verify_password(stored: str, provided: str) -> bool:
 
 
 def authenticate(username: str, password: str) -> str:
-    """Valida usuario/password y devuelve el subject. Lanza InvalidCredentials."""
-    stored = users().get(username)
-    if stored is None or not verify_password(stored, password):
+    """Valida usuario/password contra la base y devuelve el subject."""
+    from api import auth_db  # import local: auth_db importa este módulo
+
+    with auth_db.connection() as conn:
+        user = auth_db.verify_login(conn, username, password)
+    if user is None:
         # Mensaje único: no revelar si el usuario existe.
         raise InvalidCredentials("Usuario o password incorrectos.")
-    return username
+    return user["username"]
 
 
 def create_access_token(
@@ -237,6 +227,12 @@ def decode_access_token(token: str) -> dict[str, Any]:
         raise AuthError("Token inválido.") from exc
 
 
+# Cache de API keys: evita un roundtrip a Postgres por cada request. El costo
+# aceptado es que una key recién revocada puede seguir viva hasta 5 segundos.
+API_KEY_CACHE_TTL_SECONDS = 5.0
+_API_KEY_CACHE: dict[str, tuple[float, dict[str, Any] | None]] = {}
+
+
 def _matches_any_api_key(candidate: str, keys: Iterable[str]) -> bool:
     valid = False
     candidate_bytes = candidate.encode("utf-8")
@@ -247,23 +243,47 @@ def _matches_any_api_key(candidate: str, keys: Iterable[str]) -> bool:
     return valid
 
 
+def _lookup_api_key(candidate: str) -> dict[str, Any] | None:
+    """Busca la API key en la base, con cache corto para no pegarle por request."""
+    from api import auth_db  # import local: auth_db importa este módulo
+
+    now_ts = time.time()
+    cached = _API_KEY_CACHE.get(candidate)
+    if cached is not None and now_ts - cached[0] < API_KEY_CACHE_TTL_SECONDS:
+        return cached[1]
+    if len(_API_KEY_CACHE) > 500:
+        _API_KEY_CACHE.clear()
+    try:
+        with auth_db.connection() as conn:
+            user = auth_db.authenticate_api_key(conn, candidate)
+    except Exception:  # base caída: no se autentica nada, pero no se cae el 401
+        return None
+    _API_KEY_CACHE[candidate] = (now_ts, user)
+    return user
+
+
 def subject_from_headers(headers: Mapping[str, str]) -> str:
     """Resuelve el sujeto autenticado a partir de los headers de la request."""
     api_key = headers.get(API_KEY_HEADER)
-    if api_key and _matches_any_api_key(api_key, api_keys()):
-        return f"apikey:{api_key[:6]}…"
+    if api_key:
+        user = _lookup_api_key(api_key)
+        if user is not None:
+            return f"apikey:{user['username']}"
 
     authorization = headers.get("authorization", "")
     scheme, _, token = authorization.partition(" ")
-    if scheme.lower() != "bearer" or not token.strip():
-        raise AuthError(
-            "Credenciales requeridas: header 'X-API-Key' o 'Authorization: Bearer <jwt>'."
-        )
-    claims = decode_access_token(token.strip())
-    subject = str(claims.get("sub") or "").strip()
-    if not subject:
-        raise AuthError("Token inválido: falta el claim 'sub'.")
-    return f"jwt:{subject}"
+    if scheme.lower() == "bearer" and token.strip():
+        claims = decode_access_token(token.strip())
+        subject = str(claims.get("sub") or "").strip()
+        if not subject:
+            raise AuthError("Token inválido: falta el claim 'sub'.")
+        return f"jwt:{subject}"
+
+    if api_key:
+        raise AuthError("API key inválida, vencida o revocada.")
+    raise AuthError(
+        "Credenciales requeridas: header 'X-API-Key' o 'Authorization: Bearer <jwt>'."
+    )
 
 
 class ApiAuthMiddleware:
