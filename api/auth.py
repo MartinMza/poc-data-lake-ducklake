@@ -227,35 +227,32 @@ def decode_access_token(token: str) -> dict[str, Any]:
         raise AuthError("Token inválido.") from exc
 
 
-# Cache de API keys: evita un roundtrip a Postgres por cada request. El costo
-# aceptado es que una key recién revocada puede seguir viva hasta 5 segundos.
-API_KEY_CACHE_TTL_SECONDS = 5.0
-_API_KEY_CACHE: dict[str, tuple[float, dict[str, Any] | None]] = {}
-
-# Cache de estado de usuario para el camino Bearer: sin esto, un JWT ya emitido
-# seguiría sirviendo después de deshabilitar al usuario hasta que venciera.
-_USER_CACHE_TTL_SECONDS = 5.0
-_USER_CACHE: dict[str, tuple[float, bool]] = {}
-
-
 def user_can_authenticate(username: str) -> bool:
-    """True si el usuario existe, no está deshabilitado y no es de servicio."""
+    """True si el usuario existe, no está deshabilitado y no es de servicio.
+
+    Sin cache a propósito: una cache (aunque sea de segundos) mantendría vivo a
+    un usuario ya deshabilitado, y el punto de deshabilitarlo es que deje de
+    entrar ya. El costo es un roundtrip a Postgres por request con Bearer.
+    """
     from api import auth_db  # import local: auth_db importa este módulo
 
-    now_ts = time.time()
-    cached = _USER_CACHE.get(username)
-    if cached is not None and now_ts - cached[0] < _USER_CACHE_TTL_SECONDS:
-        return cached[1]
-    if len(_USER_CACHE) > 500:
-        _USER_CACHE.clear()
     try:
         with auth_db.connection() as conn:
             row = auth_db.get_user(conn, username)
     except Exception:  # base caída: no se autentica nada
         return False
-    active = bool(row) and row["disabled_at"] is None and row["role"] != "service"
-    _USER_CACHE[username] = (now_ts, active)
-    return active
+    return bool(row) and row["disabled_at"] is None and row["role"] != "service"
+
+
+def _lookup_api_key(candidate: str) -> dict[str, Any] | None:
+    """Busca la API key en la base. Sin cache: revocar debe cortar en el acto."""
+    from api import auth_db  # import local: auth_db importa este módulo
+
+    try:
+        with auth_db.connection() as conn:
+            return auth_db.authenticate_api_key(conn, candidate)
+    except Exception:  # base caída: no se autentica nada, pero no se cae el 401
+        return None
 
 
 def _matches_any_api_key(candidate: str, keys: Iterable[str]) -> bool:
@@ -266,25 +263,6 @@ def _matches_any_api_key(candidate: str, keys: Iterable[str]) -> bool:
         # En bytes: compare_digest rechaza str con caracteres no-ASCII.
         valid |= hmac.compare_digest(candidate_bytes, key.encode("utf-8"))
     return valid
-
-
-def _lookup_api_key(candidate: str) -> dict[str, Any] | None:
-    """Busca la API key en la base, con cache corto para no pegarle por request."""
-    from api import auth_db  # import local: auth_db importa este módulo
-
-    now_ts = time.time()
-    cached = _API_KEY_CACHE.get(candidate)
-    if cached is not None and now_ts - cached[0] < API_KEY_CACHE_TTL_SECONDS:
-        return cached[1]
-    if len(_API_KEY_CACHE) > 500:
-        _API_KEY_CACHE.clear()
-    try:
-        with auth_db.connection() as conn:
-            user = auth_db.authenticate_api_key(conn, candidate)
-    except Exception:  # base caída: no se autentica nada, pero no se cae el 401
-        return None
-    _API_KEY_CACHE[candidate] = (now_ts, user)
-    return user
 
 
 def subject_from_headers(headers: Mapping[str, str]) -> str:

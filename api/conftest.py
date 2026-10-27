@@ -21,7 +21,7 @@ os.environ.setdefault(
     "AUTH_JWT_SECRET", "test-jwt-secret-0123456789abcdef0123456789abcdef"
 )
 
-from api import auth, auth_db  # noqa: E402
+from api import auth_db  # noqa: E402
 
 from api import test_support  # noqa: E402
 from api.test_support import (  # noqa: E402
@@ -48,5 +48,4 @@ def _database():
     with auth_db.connection() as conn:
         auth_db.ensure_schema(conn)
     test_support.seed()
-    auth._API_KEY_CACHE.clear()
     yield

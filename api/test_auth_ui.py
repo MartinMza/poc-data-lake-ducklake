@@ -10,7 +10,7 @@ from __future__ import annotations
 import pytest
 from fastapi.testclient import TestClient
 
-from api import auth, auth_db, test_support
+from api import auth_db, test_support
 from api.main import app
 from api.test_support import PASSWORD, SUPERADMIN_PASSWORD, SUPERADMIN_USERNAME, USERNAME
 
@@ -18,7 +18,6 @@ from api.test_support import PASSWORD, SUPERADMIN_PASSWORD, SUPERADMIN_USERNAME,
 @pytest.fixture()
 def client():
     test_support.seed()
-    auth._API_KEY_CACHE.clear()
     with TestClient(app) as test_client:
         yield test_client
 
@@ -137,7 +136,6 @@ def test_revoked_key_stops_working_against_the_api(client):
     headers = {"X-API-Key": key}
     assert client.get("/api/v1/tables", headers=headers).status_code == 200
     assert client.post(f"/ui/api/keys/{created['id']}/revoke").status_code == 200
-    auth._API_KEY_CACHE.clear()  # el cache de 5s no aplica en el test
     assert client.get("/api/v1/tables", headers=headers).status_code == 401
 
 
