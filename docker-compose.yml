@@ -162,10 +162,14 @@ services:
       GARAGE_S3_REGION: ${GARAGE_S3_REGION:-garage}
       DUCKLAKE_DATA_PATH: ${DUCKLAKE_DATA_PATH:-s3://lakehouse/data/}
       # Auth obligatoria (fail-closed): API keys para servicio/agentes y JWT para personas.
-      AUTH_API_KEYS: ${AUTH_API_KEYS:-}
-      AUTH_USERS: ${AUTH_USERS:-}
       AUTH_JWT_SECRET: ${AUTH_JWT_SECRET:-}
       AUTH_JWT_TTL_MINUTES: ${AUTH_JWT_TTL_MINUTES:-60}
+      # Credenciales: viven en Postgres, en la base `dulse_auth`.
+      AUTH_DB_NAME: ${AUTH_DB_NAME:-dulse_auth}
+      # Legado: el arranque las importa a la base una única vez y después no
+      # se leen. Se pueden vaciar cuando el panel ya tiene los usuarios.
+      AUTH_API_KEYS: ${AUTH_API_KEYS:-}
+      AUTH_USERS: ${AUTH_USERS:-}
     depends_on:
       postgres-catalog:
         condition: service_healthy

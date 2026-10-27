@@ -343,7 +343,10 @@ def revoke_api_key(
 
 def authenticate_api_key(conn: psycopg.Connection, key: str) -> dict[str, Any] | None:
     """Devuelve el usuario dueño si la key existe, no venció y no fue revocada."""
-    if not key or not key.startswith(KEY_PREFIX):
+    # Sin filtro de formato: las keys migradas del `.env` no tienen el prefijo
+    # nuevo y tienen que seguir funcionando. Una key basura es un lookup que no
+    # encuentra nada, nada más.
+    if not key:
         return None
     with conn.cursor() as cur:
         cur.execute(
@@ -539,9 +542,23 @@ def _ensure_service_user(conn: psycopg.Connection) -> str:
         return cur.fetchone()["id"]
 
 
+def ensure_database() -> None:
+    """Crea la base si no existe (idempotente)."""
+    try:
+        with psycopg.connect(dsn(), connect_timeout=3):
+            return
+    except psycopg.OperationalError as exc:
+        if "does not exist" not in str(exc):
+            raise
+    admin_dsn = dsn().replace(f"dbname={database_name()}", "dbname=postgres")
+    with psycopg.connect(admin_dsn, autocommit=True) as conn:
+        conn.execute(f'CREATE DATABASE "{database_name()}"')
+
+
 def bootstrap() -> dict[str, Any]:
     """Prepara la base al arrancar. Devuelve el estado para el log."""
     try:
+        ensure_database()
         with connection() as conn:
             ensure_schema(conn)
             purge_expired(conn)

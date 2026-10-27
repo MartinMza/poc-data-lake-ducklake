@@ -181,3 +181,19 @@ def test_has_superadmin_reflects_the_role(conn):
     assert auth_db.has_superadmin(conn) is False
     auth_db.create_user(conn, username="root", password="otro-secreto", role="superadmin")
     assert auth_db.has_superadmin(conn) is True
+
+
+def test_key_migrada_sin_prefijo_tambien_autentica(conn):
+    """Las keys importadas del `.env` no tienen el prefijo nuevo: deben seguir
+    funcionando, o la migración dejaría a todos afuera."""
+    user = _user(conn)
+    legacy = "0123456789abcdef0123456789abcdef0123456789abcdef"
+    conn.execute(
+        """
+        INSERT INTO api_keys (user_id, label, visible_prefix, key_sha256, expires_at)
+        VALUES (%s, 'legacy', %s, %s, now() + interval '30 days')
+        """,
+        (user["id"], auth_db.visible_prefix(legacy), auth_db.hash_api_key(legacy)),
+    )
+    conn.commit()
+    assert auth_db.authenticate_api_key(conn, legacy)["username"] == "ana"

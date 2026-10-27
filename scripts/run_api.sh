@@ -24,24 +24,16 @@ API_PORT="${API_PORT:-8000}"
 CATALOG_USER="${CATALOG_USER:-ducklake}"
 CATALOG_DB="${CATALOG_DB:-ducklake_catalog}"
 
-# Auth fail-closed: sin API keys ni usuarios JWT el servicio no arranca.
-if [[ -z "${AUTH_API_KEYS:-}" && -z "${AUTH_USERS:-}" ]]; then
-  echo "ERROR: auth sin configurar. Definí AUTH_API_KEYS y/o AUTH_USERS (+ AUTH_JWT_SECRET) en .env." >&2
-  echo "       Generá una API key:  openssl rand -hex 24" >&2
-  echo "       Generá un secreto JWT: openssl rand -hex 32" >&2
-  echo "       Hasheá un password:  api/.venv/bin/python scripts/hash_password.py" >&2
+# Auth: los usuarios y las API keys viven en Postgres (`dulse_auth`). Lo único
+# que este script necesita del entorno es el secreto que firma los JWT.
+if [[ -z "${AUTH_JWT_SECRET:-}" ]]; then
+  echo "ERROR: falta AUTH_JWT_SECRET (openssl rand -hex 32) en .env." >&2
+  echo "       Sin él no se pueden emitir ni validar los JWT." >&2
   exit 1
 fi
-if [[ -n "${AUTH_USERS:-}" && -z "${AUTH_JWT_SECRET:-}" ]]; then
-  echo "ERROR: AUTH_USERS está definido pero falta AUTH_JWT_SECRET (openssl rand -hex 32)." >&2
-  exit 1
-fi
-# Sin mostrar el valor: el arranque escribe en consola y en los logs de compose.
-if [[ -n "${AUTH_API_KEYS:-}" ]]; then
-  AUTH_HINT="API key configurada (header X-API-Key: <tu-key>)"
-else
-  AUTH_HINT="POST /auth/token (usuarios de AUTH_USERS)"
-fi
+HINT_PANEL="panel de credenciales: http://localhost:${API_PORT:-8000}/ui"
+
+AUTH_HINT="$HINT_PANEL"
 
 MODE="host"
 if [[ "${1:-}" == "--docker" ]]; then

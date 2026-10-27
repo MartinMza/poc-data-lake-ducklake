@@ -60,3 +60,22 @@ viviendo en Postgres en lugar del `.env`. Reemplaza el flujo actual de
 - **L2** (decisiones, elegidas por el usuario): D1 base `dulse_auth` en el mismo
   Postgres · D2 token de setup de un solo uso + wizard · D3 sólo hash, la key se
   muestra una vez · D4 se elimina `AUTH_API_KEYS` del entorno.
+
+## Estado de ejecución
+
+| Task | Estado | Evidencia |
+|---|---|---|
+| T1 esquema + `auth_db` | hecho | C1 (`04bb442`), 15 tests contra Postgres real |
+| T2 hash de password y key | hecho | C1: PBKDF2 + SHA-256 + prefijo visible |
+| T3 token de setup | hecho | C2: impreso en el log del arranque, un solo uso, 30 min |
+| T4 sesión (setup/login/logout/me) | hecho | C2: cookie HttpOnly, 8 h |
+| T5 usuarios y keys | hecho | C2: alta/baja de usuarios, crear/rotar/revocar keys |
+| T6 middleware contra la base | hecho | C2: API key por hash con cache de 5 s, JWT desde la fila del usuario |
+| T7 front `/ui` | hecho | C2: página única sin build |
+| T8 reglas 5 keys / 180 días | hecho | C2: validadas en `auth_db`, probadas por HTTP |
+| T9 tests | hecho | 68 en total; el panel tiene 15 tests propios |
+| T10 docs | hecho | `docs/MANUAL.md` (panel + recetas), `.env.example`, compose, scripts |
+
+Bug encontrado por la verificación en vivo: `authenticate_api_key` exigía el
+prefijo `dulse_`, así que las keys migradas del `.env` daban 401. Test primero
+(`test_key_migrada_sin_prefijo_tambien_autentica`), después el fix.

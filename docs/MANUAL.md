@@ -100,20 +100,22 @@ Más tres tablas internas de `dlt` (`_dlt_loads`, `_dlt_pipeline_state`,
 
 ### Autenticación: dos caminos, uno obligatorio
 
-Todo pasa por credencial salvo `/health`, `/docs`, `/openapi.json`, `/redoc` y `/`.
+Todo pasa por credencial salvo `/health`, `/docs`, `/openapi.json`, `/redoc`, `/` y `/ui`.
 
 | Quién sos | Qué usás | Cómo |
 |---|---|---|
-| script, agente, dashboard | **API key** | header `X-API-Key: <key>` |
+| script, agente, dashboard | **API key** | header `X-API-Key: <key>` (se crea en `/ui`) |
 | persona, Swagger, cliente MCP | **JWT** | `POST /auth/token` → `Authorization: Bearer <token>` |
 
+Las credenciales viven en Postgres (base `dulse_auth`), no en el `.env`. Para
+conseguir una API key: entrá al panel en **http://localhost:8000/ui** y creala
+ahí; se muestra una sola vez.
+
 ```bash
-export KEY=$(grep '^AUTH_API_KEYS=' .env | cut -d= -f2-)
 curl -s -H "X-API-Key: $KEY" localhost:8000/api/v1/sqlserver/tables
 ```
 
-Es **fail-closed**: sin credenciales válidas el servicio no arranca. Una API key
-de menos de 24 caracteres no cuenta como credencial válida.
+Es **fail-closed**: sin credenciales válidas ninguna request de datos pasa.
 
 ### API REST
 
@@ -256,6 +258,58 @@ Tres cosas que te van a ahorrar tiempo:
   reingesta.
 - El rango de commits de la feature de auth está revisado y aprobado; si tocás
   `api/auth.py`, esperá otra revisión.
+
+---
+
+## Panel de credenciales (`/ui`)
+
+Todo lo de credenciales se hace en el navegador: **http://localhost:8000/ui**.
+
+| Quiero… | Dónde | Nota |
+|---|---|---|
+| entrar | pantalla de login | usuario y password |
+| crear una API key | "Crear API key" | elegís para qué es y cuántos días |
+| copiar una key nueva | banner verde | **se muestra una sola vez** |
+| rotar una key | "Rotar" en la fila | revoca la vieja y crea la nueva |
+| revocar una key | "Revocar" en la fila | el cliente que la use deja de funcionar |
+| agregar un usuario | sección "Usuarios" | sólo el superAdmin la ve |
+| deshabilitar un usuario | "Deshabilitar" | sus keys dejan de funcionar |
+
+Reglas que aplica el servidor (no la UI):
+
+- máximo **5 API keys activas** por usuario;
+- vencimiento entre **1 y 180 días**;
+- el password se guarda hasheado (PBKDF2) y de cada key sólo queda el hash.
+
+### Primer arranque
+
+Si la base no tiene ningún superAdmin, el log del servicio imprime un
+**SETUP TOKEN** de un solo uso (vence en 30 minutos):
+
+```bash
+docker compose logs lake-api | grep -A1 "SETUP TOKEN"
+```
+
+Con ese token, el panel muestra la pantalla "Primera configuración" y crea el
+superAdmin. Después el endpoint se cierra solo.
+
+### Si te olvidás el password del superAdmin
+
+```bash
+HASH=$(api/.venv/bin/python scripts/hash_password.py --password-stdin <<< 'nuevo-password')
+docker compose exec -T postgres-catalog psql -U ducklake -d dulse_auth \
+  -c "UPDATE users SET password_hash='$HASH' WHERE username='admin';"
+```
+
+### Empezar de cero con las credenciales
+
+```bash
+docker compose exec -T postgres-catalog psql -U ducklake -d postgres \
+  -c "DROP DATABASE IF EXISTS dulse_auth"
+docker compose restart lake-api      # recrea la base e imprime un SETUP TOKEN nuevo
+```
+
+Ojo: eso borra usuarios y keys. Los datos del lake no se tocan.
 
 ---
 
