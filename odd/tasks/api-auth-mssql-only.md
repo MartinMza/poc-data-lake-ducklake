@@ -87,7 +87,7 @@ Candidatos revisados como work-unit commits, con `baseRef` + `committedOnly`
 |---|---|---|---|
 | Docs (`053fe23`) | `review-0652740d3478315e` | approved, quemado | ninguno |
 | Auth (`8339c8f`) | `review-d6cc0681bca63e4b` → `review-aaa23e1a6020f34e` | approved, quemado | 3 corregidos + 5 avisos informacionales |
-| Limpieza (`fb41cc9`) | — | **pendiente** | — |
+| Limpieza (`fb41cc9`) | `review-26cb6ee5c23e6b0c` | approved, quemado | 1 aviso informacional |
 | API/MCP (`15812b1`) | — | **pendiente** (cubierto por 16 tests) | — |
 
 Hallazgos que abrieron corrección (los tres reales, los tres corregidos):
@@ -103,6 +103,10 @@ Hallazgos que abrieron corrección (los tres reales, los tres corregidos):
 
 Avisos informacionales no bloqueantes: `api/main.py:89`, `api/auth.py:154`,
 `api/auth.py:115`, `scripts/run_api.sh:43`, `scripts/hash_password.py:27`.
+
+Aviso informacional del slice de limpieza: `scripts/container_init.sh:130`
+(resilience, WARNING informacional). No abrió corrección ni reabre el review;
+queda como triage posterior.
 
 Nota de herramienta: la recovery `scope_changed` no ejecuta por el facade
 (lee STATUS sin los selectores `baseRef`/`committedOnly`); se corrió el comando
