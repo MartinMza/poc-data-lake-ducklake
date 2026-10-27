@@ -47,7 +47,7 @@ def conn():
         yield connection
 
 
-def _user(conn, username="ana", password="secreto-123"):
+def _user(conn, username="ana", password="secreto-1234"):
     return auth_db.create_user(conn, username=username, password=password)
 
 
@@ -60,9 +60,9 @@ def test_password_is_stored_hashed(conn):
 
 def test_login_returns_user_only_with_the_right_password(conn):
     _user(conn)
-    assert auth_db.verify_login(conn, "ana", "secreto-123")["username"] == "ana"
+    assert auth_db.verify_login(conn, "ana", "secreto-1234")["username"] == "ana"
     assert auth_db.verify_login(conn, "ana", "otra-cosa") is None
-    assert auth_db.verify_login(conn, "nadie", "secreto-123") is None
+    assert auth_db.verify_login(conn, "nadie", "secreto-1234") is None
 
 
 def test_duplicate_username_is_rejected(conn):
@@ -74,7 +74,7 @@ def test_duplicate_username_is_rejected(conn):
 def test_disabled_user_cannot_log_in(conn):
     user = _user(conn)
     auth_db.disable_user(conn, user["id"])
-    assert auth_db.verify_login(conn, "ana", "secreto-123") is None
+    assert auth_db.verify_login(conn, "ana", "secreto-1234") is None
 
 
 def test_api_key_is_returned_once_and_stored_hashed(conn):
@@ -153,7 +153,7 @@ def test_rotate_works_even_with_all_slots_used(conn):
 
 def test_a_user_cannot_revoke_someone_elses_key(conn):
     ana = _user(conn, username="ana")
-    beto = _user(conn, username="beto", password="secreto-456")
+    beto = _user(conn, username="beto", password="secreto-4567")
     _, row = auth_db.create_api_key(conn, user_id=beto["id"], expires_in_days=30)
     with pytest.raises(auth_db.AuthDbError, match="no es tuya"):
         auth_db.revoke_api_key(conn, key_id=row["id"], user_id=ana["id"])
@@ -197,3 +197,92 @@ def test_key_migrada_sin_prefijo_tambien_autentica(conn):
     )
     conn.commit()
     assert auth_db.authenticate_api_key(conn, legacy)["username"] == "ana"
+
+
+# --- passwords, reset y activación (S2, S3, S4) ------------------------------
+
+
+def test_password_corta_o_igual_al_usuario_se_rechaza(conn):
+    with pytest.raises(auth_db.AuthDbError, match="al menos 12"):
+        auth_db.validate_password("corta")
+    with pytest.raises(auth_db.AuthDbError, match="nombre de usuario"):
+        auth_db.validate_password("ana-ana-ana-ana", username="ana-ana-ana-ana")
+    assert auth_db.validate_password("password-larga-1", username="ana") == "password-larga-1"
+
+
+def test_el_alta_rechaza_una_password_debil():
+    with auth_db.connection() as conn:
+        with pytest.raises(auth_db.AuthDbError, match="al menos 12"):
+            auth_db.create_user(conn, username="debil", password="corta")
+        assert auth_db.get_user(conn, "debil") is None  # no quedó nada escrito
+
+
+def test_password_aleatoria_es_legible_y_distinta_cada_vez():
+    a, b = auth_db.generate_random_password(), auth_db.generate_random_password()
+    assert a != b
+    assert len(a) >= auth_db.MIN_PASSWORD_LENGTH
+    assert a.count("-") == auth_db.RANDOM_PASSWORD_GROUPS - 1
+    assert all(ch in auth_db.RANDOM_PASSWORD_ALPHABET or ch == "-" for ch in a)
+
+
+def test_un_password_temporal_obliga_a_cambiarla_al_entrar(conn):
+    usuario = auth_db.create_user(
+        conn, username="temp", password="temporal-1234", must_change_password=True
+    )
+    assert usuario["must_change_password"] is True
+    login = auth_db.verify_login(conn, "temp", "temporal-1234")
+    assert login["must_change_password"] is True
+
+
+def test_el_reset_corta_sesiones_del_panel_pero_no_las_api_keys(conn):
+    usuario = auth_db.create_user(conn, username="beto2", password="secreto-1234")
+    session = auth_db.create_session(conn, usuario["id"])
+    key, _ = auth_db.create_api_key(conn, user_id=usuario["id"], expires_in_days=30)
+    assert auth_db.session_user(conn, session) is not None
+
+    auth_db.set_user_password(conn, usuario["id"], "nueva-password-1")
+
+    assert auth_db.session_user(conn, session) is None, "la sesión del panel debe morir"
+    assert auth_db.authenticate_api_key(conn, key) is not None, "la API key sigue viva"
+    assert auth_db.verify_login(conn, "beto2", "nueva-password-1") is not None
+    assert auth_db.verify_login(conn, "beto2", "secreto-1234") is None
+
+
+def test_reset_con_password_temporal_deja_el_flag_prendido(conn):
+    usuario = auth_db.create_user(conn, username="carla", password="secreto-1234")
+    auth_db.set_user_password(conn, usuario["id"], "temporal-9999", must_change=True)
+    assert auth_db.verify_login(conn, "carla", "temporal-9999")["must_change_password"] is True
+
+
+def test_link_de_activacion_sirve_una_sola_vez(conn):
+    usuario = auth_db.create_user(
+        conn, username="dani", password="provisional-12", must_change_password=True
+    )
+    token = auth_db.issue_activation_token(conn, usuario["id"])
+
+    assert auth_db.activation_token_user(conn, token)["username"] == "dani"
+    auth_db.consume_activation_token(conn, token, "elegida-por-dani")
+
+    assert auth_db.verify_login(conn, "dani", "elegida-por-dani") is not None
+    assert auth_db.verify_login(conn, "dani", "provisional-1") is None
+    # el flag quedó limpio: la password la eligió el usuario
+    assert auth_db.verify_login(conn, "dani", "elegida-por-dani")["must_change_password"] is False
+    with pytest.raises(auth_db.AuthDbError, match="ya se usó"):
+        auth_db.consume_activation_token(conn, token, "otra-password-1")
+
+
+def test_emitir_un_link_nuevo_invalida_el_anterior(conn):
+    usuario = auth_db.create_user(conn, username="eve", password="provisional-12")
+    viejo = auth_db.issue_activation_token(conn, usuario["id"])
+    nuevo = auth_db.issue_activation_token(conn, usuario["id"])
+    assert auth_db.activation_token_user(conn, viejo) is None
+    assert auth_db.activation_token_user(conn, nuevo) is not None
+
+
+def test_un_usuario_deshabilitado_no_puede_usar_el_link(conn):
+    usuario = auth_db.create_user(conn, username="fede", password="provisional-12")
+    token = auth_db.issue_activation_token(conn, usuario["id"])
+    auth_db.disable_user(conn, usuario["id"])
+    assert auth_db.activation_token_user(conn, token) is None
+    with pytest.raises(auth_db.AuthDbError):
+        auth_db.consume_activation_token(conn, token, "password-nueva-1")

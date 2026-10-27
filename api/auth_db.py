@@ -31,6 +31,12 @@ MAX_EXPIRY_DAYS = 180
 MIN_EXPIRY_DAYS = 1
 SESSION_TTL_MINUTES = 480
 SETUP_TOKEN_TTL_MINUTES = 30
+ACTIVATION_TOKEN_TTL_HOURS = 24
+MIN_PASSWORD_LENGTH = 12
+RANDOM_PASSWORD_GROUPS = 4
+RANDOM_PASSWORD_GROUP_LENGTH = 4
+# Sin caracteres que se confunden al dictar: 0/O, 1/l/I, 5/S
+RANDOM_PASSWORD_ALPHABET = "abcdefghjkmnpqrtuvwxyz2346789"
 
 KEY_PREFIX = "dulse_"
 KEY_RANDOM_BYTES = 24
@@ -45,6 +51,8 @@ CREATE TABLE IF NOT EXISTS users (
     role text NOT NULL DEFAULT 'user',
     created_at timestamptz NOT NULL DEFAULT now(),
     disabled_at timestamptz,
+    must_change_password boolean NOT NULL DEFAULT false,
+    password_changed_at timestamptz,
     CONSTRAINT users_role_check CHECK (role IN ('superadmin', 'user', 'service'))
 );
 
@@ -80,10 +88,21 @@ CREATE TABLE IF NOT EXISTS meta (
 CREATE TABLE IF NOT EXISTS setup_tokens (
     id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
     token_sha256 text NOT NULL UNIQUE,
+    purpose text NOT NULL DEFAULT 'setup',
+    user_id uuid REFERENCES users(id) ON DELETE CASCADE,
     created_at timestamptz NOT NULL DEFAULT now(),
     expires_at timestamptz NOT NULL,
     consumed_at timestamptz
 );
+"""
+
+# Columnas agregadas después de la primera versión del esquema: se aplican con
+# ALTER ... IF NOT EXISTS para que una base ya creada se actualice sola.
+SCHEMA_MIGRATIONS_SQL = """
+ALTER TABLE users ADD COLUMN IF NOT EXISTS must_change_password boolean NOT NULL DEFAULT false;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS password_changed_at timestamptz;
+ALTER TABLE setup_tokens ADD COLUMN IF NOT EXISTS purpose text NOT NULL DEFAULT 'setup';
+ALTER TABLE setup_tokens ADD COLUMN IF NOT EXISTS user_id uuid REFERENCES users(id) ON DELETE CASCADE;
 """
 
 
@@ -118,6 +137,7 @@ def ensure_schema(conn: psycopg.Connection) -> None:
     """Crea las tablas si faltan. Idempotente: se llama en cada arranque."""
     with conn.cursor() as cur:
         cur.execute(SCHEMA_SQL)
+        cur.execute(SCHEMA_MIGRATIONS_SQL)
     conn.commit()
 
 
@@ -137,6 +157,31 @@ def now() -> datetime:
     return datetime.now(timezone.utc)
 
 
+# --- passwords --------------------------------------------------------------
+
+
+def validate_password(password: str, *, username: str = "") -> str:
+    """Reglas mínimas de password. Devuelve el password si es aceptable."""
+    value = password or ""
+    if len(value) < MIN_PASSWORD_LENGTH:
+        raise AuthDbError(
+            f"El password debe tener al menos {MIN_PASSWORD_LENGTH} caracteres "
+            f"(tiene {len(value)})."
+        )
+    if username and value.strip().lower() == username.strip().lower():
+        raise AuthDbError("El password no puede ser igual al nombre de usuario.")
+    return value
+
+
+def generate_random_password() -> str:
+    """Password aleatoria legible: 4 grupos de 4 caracteres sin ambigüedad."""
+    groups = [
+        "".join(secrets.choice(RANDOM_PASSWORD_ALPHABET) for _ in range(RANDOM_PASSWORD_GROUP_LENGTH))
+        for _ in range(RANDOM_PASSWORD_GROUPS)
+    ]
+    return "-".join(groups)
+
+
 # --- usuarios ---------------------------------------------------------------
 
 
@@ -146,24 +191,36 @@ def create_user(
     username: str,
     password: str,
     role: str = "user",
+    must_change_password: bool = False,
 ) -> dict[str, Any]:
-    """Crea un usuario con el password hasheado (PBKDF2-SHA256 + salt)."""
+    """Crea un usuario con el password hasheado (PBKDF2-SHA256 + salt).
+
+    Con `must_change_password=True` la credencial es de un solo uso: el usuario
+    entra y el panel lo obliga a definir una nueva antes de tocar nada más.
+    """
     username = (username or "").strip()
     if not username:
         raise AuthDbError("El usuario no puede estar vacío.")
     if not password:
         raise AuthDbError("El password no puede estar vacío.")
+    validate_password(password, username=username)
     if role not in ("superadmin", "user", "service"):
         raise AuthDbError(f"Rol inválido: {role}.")
     with conn.cursor() as cur:
         cur.execute(
             """
-            INSERT INTO users (username, password_hash, role)
-            VALUES (%s, %s, %s)
+            INSERT INTO users (username, password_hash, role, must_change_password, password_changed_at)
+            VALUES (%s, %s, %s, %s, CASE WHEN %s THEN NULL ELSE now() END)
             ON CONFLICT (username) DO NOTHING
-            RETURNING id, username, role, created_at
+            RETURNING id, username, role, created_at, must_change_password
             """,
-            (username, auth.hash_password(password), role),
+            (
+                username,
+                auth.hash_password(password),
+                role,
+                bool(must_change_password),
+                bool(must_change_password),
+            ),
         )
         row = cur.fetchone()
     if row is None:
@@ -175,7 +232,10 @@ def create_user(
 def get_user(conn: psycopg.Connection, username: str) -> dict[str, Any] | None:
     with conn.cursor() as cur:
         cur.execute(
-            "SELECT id, username, password_hash, role, disabled_at FROM users WHERE username = %s",
+            """
+            SELECT id, username, password_hash, role, disabled_at, must_change_password
+              FROM users WHERE username = %s
+            """,
             (username,),
         )
         return cur.fetchone()
@@ -186,6 +246,10 @@ def list_users(conn: psycopg.Connection) -> list[dict[str, Any]]:
         cur.execute(
             """
             SELECT u.id, u.username, u.role, u.created_at, u.disabled_at,
+                   u.must_change_password, u.password_changed_at,
+                   EXISTS (SELECT 1 FROM setup_tokens t
+                            WHERE t.user_id = u.id AND t.purpose = 'activation'
+                              AND t.consumed_at IS NULL AND t.expires_at > now()) AS pending_activation,
                    (SELECT count(*) FROM api_keys k
                      WHERE k.user_id = u.id AND k.revoked_at IS NULL
                        AND k.expires_at > now()) AS active_keys
@@ -206,7 +270,12 @@ def verify_login(conn: psycopg.Connection, username: str, password: str) -> dict
         return None
     if not auth.verify_password(row["password_hash"], password or ""):
         return None
-    return {"id": row["id"], "username": row["username"], "role": row["role"]}
+    return {
+        "id": row["id"],
+        "username": row["username"],
+        "role": row["role"],
+        "must_change_password": bool(row.get("must_change_password")),
+    }
 
 
 def disable_user(conn: psycopg.Connection, user_id: str) -> None:
@@ -218,6 +287,131 @@ def disable_user(conn: psycopg.Connection, user_id: str) -> None:
         if cur.rowcount == 0:
             raise AuthDbError("No existe el usuario, o es el superAdmin.")
     conn.commit()
+
+
+# --- reseteo de password y activación ---------------------------------------
+
+
+def revoke_user_sessions(conn: psycopg.Connection, user_id: str) -> int:
+    """Borra las sesiones del panel del usuario. Devuelve cuántas cerró."""
+    with conn.cursor() as cur:
+        cur.execute("DELETE FROM sessions WHERE user_id = %s", (user_id,))
+        removed = cur.rowcount
+    conn.commit()
+    return int(removed)
+
+
+def set_user_password(
+    conn: psycopg.Connection,
+    user_id: str,
+    password: str,
+    *,
+    must_change: bool = False,
+) -> dict[str, Any]:
+    """Cambia el password y cierra las sesiones del panel de ese usuario.
+
+    Decisión del usuario (S2): el reset corta sólo las sesiones del panel; las
+    API keys y los JWT ya emitidos siguen vivos.
+    """
+    validated = validate_password(password, username=_username_of(conn, user_id))
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            UPDATE users
+               SET password_hash = %s,
+                   must_change_password = %s,
+                   password_changed_at = now()
+             WHERE id = %s
+            RETURNING id, username, role
+            """,
+            (auth.hash_password(validated), bool(must_change), user_id),
+        )
+        row = cur.fetchone()
+        if row is None:
+            raise AuthDbError("No existe el usuario.")
+    conn.commit()
+    revoke_user_sessions(conn, user_id)
+    row["must_change_password"] = bool(must_change)
+    return row
+
+
+def _username_of(conn: psycopg.Connection, user_id: str) -> str:
+    with conn.cursor() as cur:
+        cur.execute("SELECT username FROM users WHERE id = %s", (user_id,))
+        row = cur.fetchone()
+    return row["username"] if row else ""
+
+
+def issue_activation_token(conn: psycopg.Connection, user_id: str) -> str:
+    """Emite un link de activación de un solo uso (invalida los previos)."""
+    token = secrets.token_urlsafe(32)
+    with conn.cursor() as cur:
+        cur.execute(
+            "DELETE FROM setup_tokens WHERE user_id = %s AND purpose = 'activation'",
+            (user_id,),
+        )
+        cur.execute(
+            """
+            INSERT INTO setup_tokens (token_sha256, purpose, user_id, expires_at)
+            VALUES (%s, 'activation', %s, now() + %s * interval '1 hour')
+            """,
+            (_sha256_hex(token), user_id, ACTIVATION_TOKEN_TTL_HOURS),
+        )
+    conn.commit()
+    return token
+
+
+def activation_token_user(conn: psycopg.Connection, token: str) -> dict[str, Any] | None:
+    """Devuelve el usuario del link si el token sirve; None si no aplica."""
+    if not token:
+        return None
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            SELECT u.id, u.username, u.role, u.disabled_at
+              FROM setup_tokens t JOIN users u ON u.id = t.user_id
+             WHERE t.token_sha256 = %s AND t.purpose = 'activation'
+               AND t.consumed_at IS NULL AND t.expires_at > now()
+            """,
+            (_sha256_hex(token),),
+        )
+        row = cur.fetchone()
+    if row is None or row["disabled_at"] is not None:
+        return None
+    return {"id": row["id"], "username": row["username"], "role": row["role"]}
+
+
+def consume_activation_token(
+    conn: psycopg.Connection, token: str, new_password: str
+) -> dict[str, Any]:
+    """Define el password del usuario del link y quema el token."""
+    user = activation_token_user(conn, token)
+    if user is None:
+        raise AuthDbError("El link de activación no sirve: venció, ya se usó o no existe.")
+    validate_password(new_password, username=user["username"])
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            UPDATE setup_tokens SET consumed_at = now()
+             WHERE token_sha256 = %s AND consumed_at IS NULL AND expires_at > now()
+            """,
+            (_sha256_hex(token),),
+        )
+        if cur.rowcount == 0:
+            raise AuthDbError("El link de activación no sirve: venció o ya se usó.")
+        cur.execute(
+            """
+            UPDATE users
+               SET password_hash = %s,
+                   must_change_password = false,
+                   password_changed_at = now()
+             WHERE id = %s
+            """,
+            (auth.hash_password(new_password), user["id"]),
+        )
+    conn.commit()
+    revoke_user_sessions(conn, user["id"])
+    return user
 
 
 # --- API keys ---------------------------------------------------------------
@@ -416,7 +610,7 @@ def issue_setup_token(conn: psycopg.Connection) -> str:
     """Emite un token de setup de un solo uso (invalida los anteriores)."""
     token = secrets.token_urlsafe(24)
     with conn.cursor() as cur:
-        cur.execute("DELETE FROM setup_tokens WHERE consumed_at IS NULL")
+        cur.execute("DELETE FROM setup_tokens WHERE purpose = 'setup' AND consumed_at IS NULL")
         cur.execute(
             """
             INSERT INTO setup_tokens (token_sha256, expires_at)
