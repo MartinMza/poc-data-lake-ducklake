@@ -5,10 +5,15 @@ Puertos host (sin colisión con un Postgres local en 5432):
 | servicio         | host→contenedor | qué es                              |
 |------------------|-----------------|-------------------------------------|
 | postgres-catalog | 5433→5432       | catálogo DuckLake                    |
-| postgres-source  | 5434→5432       | origen simulado (workstream 3)       |
 | garage S3        | 3900→3900       | data path DuckLake (Parquet)         |
 | garage RPC/web/admin | 3901/3902/3903 | interno/estático/admin              |
 | prefect-server   | 4200→4200       | UI/API Prefect                       |
+| mssql            | 1433→1433       | origen real de los datos             |
+| lake-api         | 8000→8000       | API REST + MCP                       |
+
+> El origen es SQL Server. El servicio `postgres-source` (origen sintético de un
+> workstream anterior) ya no existe: si aparece un contenedor con ese nombre,
+> es un huérfano y se va con `docker compose up -d --remove-orphans`.
 
 ## Puesta en marcha desde cero
 
@@ -44,5 +49,5 @@ son el único artefacto versionado del stack.
   fallback documentado en el design: SeaweedFS con la misma interfaz S3.
 - Las credenciales S3 del PoC son fijas y solo-locales (auto-provisión
   `GARAGE_DEFAULT_*`); nunca usarlas fuera del PoC.
-- `postgres-source` se levanta aquí pero su DDL/datos son del workstream 3.
+- Cómo funciona todo, en versión corta: `docs/MANUAL.md`.
 - Rollback total: `docker compose down -v` (borra volúmenes y el catálogo).

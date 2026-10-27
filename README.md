@@ -11,6 +11,10 @@ contiene solo las 7 tablas ingestadas desde SQL Server.
 
 OpenSpec: `openspec/changes/` (proposals, diseños, specs y tasks históricos).
 
+**¿Primera vez acá, o volvés después de un tiempo?** Leé
+[`docs/MANUAL.md`](docs/MANUAL.md): manual corto, por bloques, con el camino
+feliz, los comandos que se usan de verdad y una tabla de fallas comunes.
+
 ## Arquitectura
 
 ```
