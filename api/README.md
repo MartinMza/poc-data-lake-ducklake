@@ -61,7 +61,8 @@ Reglas:
 - **Fail-closed**: sin `AUTH_API_KEYS` ni `AUTH_USERS` el servicio no arranca;
   con usuarios y sin `AUTH_JWT_SECRET` tampoco.
 - Públicas solo `/health`, `/`, `/docs`, `/redoc`, `/openapi.json` y
-  `POST /auth/token`. Todo lo demás (incluido `/mcp`) exige credencial.
+  `POST /auth/token`, `/auth/panel` y `/static`. Todo lo demás (incluido `/mcp`)
+exige credencial.
 - Preflight CORS (`OPTIONS`) pasa sin credenciales.
 - El transporte MCP por **stdio** (`python -m api.mcp_server`) corre como
   proceso local del operador y no pasa por esta autenticación.

@@ -31,7 +31,7 @@ if [[ -z "${AUTH_JWT_SECRET:-}" ]]; then
   echo "       Sin él no se pueden emitir ni validar los JWT." >&2
   exit 1
 fi
-HINT_PANEL="panel de credenciales: http://localhost:${API_PORT:-8000}/ui"
+HINT_PANEL="panel de acceso: http://localhost:${API_PORT:-8000}/auth/panel"
 
 AUTH_HINT="$HINT_PANEL"
 

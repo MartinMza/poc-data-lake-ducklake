@@ -79,3 +79,29 @@ L2. Decisiones del usuario (cuestionario de 3 preguntas):
 L3. Estado de partida: 69 tests verdes, candidato de la feature de credenciales sin
     aprobar (lineage `review-ea07e75ca91696d4` en `escalated`). Este trabajo arranca
     sobre ese árbol y se revisará como rebanada propia.
+
+L4. Implementado en dos rebanadas, cada una con su verificación:
+
+    - `7e83981` capa de datos (10 tests nuevos).
+    - `3cd57af` panel SSR completo: templates, rutas, borrado de la SPA vieja,
+      deps (jinja2, python-multipart) y 24 tests nuevos. Frontera de rebanada:
+      todo lo que va de `7e83981` a `3cd57af` es una sola unidad de UI; no se
+      parte más chico porque los templates y sus rutas comparten el mismo
+      contrato de contexto.
+
+L5. Estado por spec al cerrar la implementación:
+
+| Spec | Estado | Evidencia |
+| --- | --- | --- |
+| S1 | hecho | `/auth/panel`; `/ui` → 308 |
+| S2 | hecho | reset con link o temporal; corta sólo sesiones del panel |
+| S3 | hecho | temporal fuerza cambio; el link define la contraseña |
+| S4 | hecho | `generate_random_password` + opción en el alta y el reset |
+| S5 | hecho | vistas con jerarquía, estados vacíos, confirmaciones, errores inline |
+| S6 | hecho | HTMX 2.0.4 vendorizado; tablas por fragmentos |
+| S7 | hecho | Jinja2 server-side, sin JSON intermedio ni DOM a mano |
+| S8 | hecho | test de convivencia de rutas + no duplicados |
+
+L6. Verificación: 87 tests verdes y 26 comprobaciones en vivo contra el
+    contenedor `lake-api` (login, link, activación, temporal, cambio forzado,
+    reset, keys, rotación, revocación, deshabilitado, docs y API intactas).

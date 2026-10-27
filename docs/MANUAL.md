@@ -100,16 +100,17 @@ Más tres tablas internas de `dlt` (`_dlt_loads`, `_dlt_pipeline_state`,
 
 ### Autenticación: dos caminos, uno obligatorio
 
-Todo pasa por credencial salvo `/health`, `/docs`, `/openapi.json`, `/redoc`, `/` y `/ui`.
+Todo pasa por credencial salvo `/health`, `/docs`, `/openapi.json`, `/redoc`, `/`,
+`/static` y `/auth/panel` (el panel se protege con cookie de sesión, no con key).
 
 | Quién sos | Qué usás | Cómo |
 |---|---|---|
-| script, agente, dashboard | **API key** | header `X-API-Key: <key>` (se crea en `/ui`) |
+| script, agente, dashboard | **API key** | header `X-API-Key: <key>` (se crea en `/auth/panel`) |
 | persona, Swagger, cliente MCP | **JWT** | `POST /auth/token` → `Authorization: Bearer <token>` |
 
 Las credenciales viven en Postgres (base `dulse_auth`), no en el `.env`. Para
-conseguir una API key: entrá al panel en **http://localhost:8000/ui** y creala
-ahí; se muestra una sola vez.
+conseguir una API key: entrá al panel en **http://localhost:8000/auth/panel** y
+creala ahí; se muestra una sola vez.
 
 ```bash
 curl -s -H "X-API-Key: $KEY" localhost:8000/api/v1/sqlserver/tables
@@ -261,25 +262,60 @@ Tres cosas que te van a ahorrar tiempo:
 
 ---
 
-## Panel de credenciales (`/ui`)
+## Panel de acceso (`/auth/panel`)
 
-Todo lo de credenciales se hace en el navegador: **http://localhost:8000/ui**.
+Todo lo de credenciales se hace en el navegador: **http://localhost:8000/auth/panel**.
+La ruta vieja `/ui` redirige sola.
+
+Es HTML armado en el servidor (Jinja2); las tablas se refrescan con HTMX sin
+recargar la página. No hay build, ni npm, ni CDN: `htmx.min.js` vive en
+`api/static/`.
+
+### Las vistas
+
+| Vista | Ruta | Quién entra |
+|---|---|---|
+| Entrar | `/auth/panel/entrar` | todos |
+| Mis API keys | `/auth/panel` | con sesión |
+| Mi contraseña | `/auth/panel/password` | con sesión |
+| Usuarios | `/auth/panel/usuarios` | sólo superAdmin |
+| Activar cuenta | `/auth/panel/activar/<token>` | quien tenga el link |
+| Primera configuración | `/auth/panel/configuracion` | sólo si no hay superAdmin |
+
+### Qué se puede hacer
 
 | Quiero… | Dónde | Nota |
 |---|---|---|
-| entrar | pantalla de login | usuario y password |
+| entrar | "Entrar" | usuario y contraseña |
 | crear una API key | "Crear API key" | elegís para qué es y cuántos días |
 | copiar una key nueva | banner verde | **se muestra una sola vez** |
 | rotar una key | "Rotar" en la fila | revoca la vieja y crea la nueva |
 | revocar una key | "Revocar" en la fila | el cliente que la use deja de funcionar |
-| agregar un usuario | sección "Usuarios" | sólo el superAdmin la ve |
-| deshabilitar un usuario | "Deshabilitar" | sus keys dejan de funcionar |
+| agregar un usuario | "Agregar usuario" | dos caminos: link o contraseña temporal |
+| resetear una contraseña | "Link nuevo" / "Resetear" en la fila | sólo superAdmin |
+| deshabilitar un usuario | "Deshabilitar" | corta sesión, keys y JWT |
+| cambiar mi contraseña | "Mi contraseña" | cierra tus otras sesiones del panel |
 
-Reglas que aplica el servidor (no la UI):
+### Cómo llega la primera contraseña
+
+Nadie define la contraseña de otro. Al crear un usuario elegís uno de dos caminos:
+
+| Camino | Qué recibe la persona | Qué pasa al entrar |
+|---|---|---|
+| **Link de activación** (recomendado) | una URL de un solo uso, válida 24 h | define su contraseña ahí mismo |
+| **Contraseña temporal** | una clave aleatoria que ves una sola vez | el panel lo obliga a cambiarla antes de hacer cualquier otra cosa |
+
+El link es de un solo uso: si se usa, vence o se emite uno nuevo, el anterior
+deja de servir. Un usuario deshabilitado no puede usar el link.
+
+### Reglas que aplica el servidor (no la UI)
 
 - máximo **5 API keys activas** por usuario;
 - vencimiento entre **1 y 180 días**;
-- el password se guarda hasheado (PBKDF2) y de cada key sólo queda el hash.
+- contraseña de al menos **12 caracteres** y distinta del nombre de usuario;
+- el password se guarda hasheado (PBKDF2) y de cada key sólo queda el hash;
+- **resetear la contraseña corta las sesiones del panel del usuario, no sus API keys**;
+- **deshabilitar** corta todo: sesión, keys y JWT en el acto.
 
 ### Primer arranque
 
@@ -290,8 +326,8 @@ Si la base no tiene ningún superAdmin, el log del servicio imprime un
 docker compose logs lake-api | grep -A1 "SETUP TOKEN"
 ```
 
-Con ese token, el panel muestra la pantalla "Primera configuración" y crea el
-superAdmin. Después el endpoint se cierra solo.
+Con ese token, `/auth/panel/configuracion` crea el superAdmin. Después esa
+pantalla redirige al login.
 
 ### Si te olvidás el password del superAdmin
 
