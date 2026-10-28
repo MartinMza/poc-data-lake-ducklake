@@ -49,3 +49,13 @@ def _database():
         auth_db.ensure_schema(conn)
     test_support.seed()
     yield
+
+
+@pytest.fixture(autouse=True)
+def _reset_login_throttle():
+    """El throttle es un singleton de proceso: se limpia entre tests para que el
+    estado de un test no bloquee el login de otro."""
+    from api import throttle
+
+    throttle.login_throttle = throttle._build_default()
+    yield

@@ -20,7 +20,7 @@ from fastapi import APIRouter, Form, Request, Response, status
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 
-from api import auth, auth_db
+from api import auth, auth_db, config, throttle
 
 COOKIE_NAME = "dulse_session"
 TEMPLATES_DIR = Path(__file__).resolve().parent / "templates"
@@ -79,6 +79,10 @@ def _set_session(response: Response, token: str) -> None:
         key=COOKIE_NAME,
         value=token,
         httponly=True,
+        # `Secure` para no mandar la cookie en claro. Default False: el PoC corre
+        # local sobre http://localhost; en un despliegue con TLS se activa con
+        # SESSION_COOKIE_SECURE=true.
+        secure=config.env_bool("SESSION_COOKIE_SECURE", False),
         samesite="lax",
         max_age=auth_db.SESSION_TTL_MINUTES * 60,
         path="/",
@@ -156,9 +160,22 @@ def login_submit(
     password: str = Form(""),
     next: str = Form(""),
 ) -> Response:
+    locked = throttle.login_throttle.locked_for(username)
+    if locked > 0:
+        minutes = max(1, round(locked / 60))
+        return _render(
+            request,
+            "login.html",
+            error=f"Demasiados intentos fallidos. Esperá unos {minutes} minuto(s) y probá de nuevo.",
+            done=None,
+            username=username,
+            next_path=safe_next(next),
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+        )
     with auth_db.connection() as conn:
         user = auth_db.verify_login(conn, username, password)
         if user is None:
+            throttle.login_throttle.register_failure(username)
             return _render(
                 request,
                 "login.html",
@@ -169,6 +186,7 @@ def login_submit(
                 status_code=status.HTTP_401_UNAUTHORIZED,
             )
         token = auth_db.create_session(conn, user["id"])
+    throttle.login_throttle.register_success(username)
     # La contraseña temporal manda sobre `next`: primero se cambia la clave.
     target = PASSWORD_PATH if user.get("must_change_password") else (safe_next(next) or PANEL_PATH)
     response = _redirect(target)

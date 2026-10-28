@@ -55,6 +55,12 @@ Configuración (`.env` o entorno):
 | `AUTH_JWT_SECRET` | *(vacío)* | secreto HS256 (32+ bytes: `openssl rand -hex 32`) |
 | `AUTH_JWT_TTL_MINUTES` | `60` | vigencia del access token |
 | `AUTH_JWT_ISSUER` | `dulse-lake-api` | claim `iss` exigido |
+| `CORS_ALLOW_ORIGINS` | local (`http://localhost:8000`, `http://127.0.0.1:8000`) | orígenes del navegador, lista por comas o `*` |
+| `CORS_ALLOW_CREDENTIALS` | `false` | con `*` en orígenes se ignora y queda `false` |
+| `SESSION_COOKIE_SECURE` | `false` | flag `Secure` de la cookie del panel (poné `true` con TLS) |
+| `AUTH_LOGIN_MAX_ATTEMPTS` | `5` | fallos por usuario antes del bloqueo |
+| `AUTH_LOGIN_WINDOW_SECONDS` | `300` | ventana deslizante de conteo |
+| `AUTH_LOGIN_LOCKOUT_SECONDS` | `300` | duración del bloqueo |
 
 Reglas:
 
@@ -65,6 +71,13 @@ Reglas:
 - `/docs`, `/redoc` y `/openapi.json` piden **sesión del panel**: sin cookie
   redirigen a `/auth/panel/entrar?next=<ruta>`.
 - Preflight CORS (`OPTIONS`) pasa sin credenciales.
+- CORS por entorno (`CORS_ALLOW_ORIGINS`): el default es local y acotado. `*`
+  con credenciales es inseguro y se rechaza (se desactivan las credenciales).
+- Login con **rate-limiting** por usuario: tras `AUTH_LOGIN_MAX_ATTEMPTS` fallos
+  dentro de `AUTH_LOGIN_WINDOW_SECONDS`, responde `429` con `Retry-After`
+  durante `AUTH_LOGIN_LOCKOUT_SECONDS`. Es por-proceso (un worker); con varios
+  workers hace falta un store compartido. El login es constant-time para no
+  filtrar qué usuarios existen.
 - El transporte MCP por **stdio** (`python -m api.mcp_server`) corre como
   proceso local del operador y no pasa por esta autenticación.
 

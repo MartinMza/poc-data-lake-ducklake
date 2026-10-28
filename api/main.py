@@ -15,7 +15,7 @@ from fastapi.responses import JSONResponse, PlainTextResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from api import auth, auth_db, auth_panel, engine
+from api import auth, auth_db, auth_panel, config, engine, throttle
 from api.mcp_server import mcp
 
 logger = logging.getLogger("dulse.auth")
@@ -55,6 +55,33 @@ async def lifespan(app: FastAPI):
     yield
 
 
+# Orígenes locales por defecto: el panel y la API en localhost. Para exponer un
+# frontend propio, setear CORS_ALLOW_ORIGINS en el entorno (lista por comas).
+DEFAULT_CORS_ORIGINS: tuple[str, ...] = (
+    "http://localhost:8000",
+    "http://127.0.0.1:8000",
+)
+
+
+def cors_config() -> tuple[list[str], bool]:
+    """Orígenes y credenciales de CORS desde el entorno, con guarda de seguridad.
+
+    `CORS_ALLOW_ORIGINS` es una lista por comas (o `*`). `CORS_ALLOW_CREDENTIALS`
+    es booleano. La combinación `*` + credenciales es inválida en el navegador y
+    peligrosa si se aceptara, así que se desactivan las credenciales con aviso.
+    """
+    origins = list(config.env_list("CORS_ALLOW_ORIGINS", DEFAULT_CORS_ORIGINS))
+    credentials = config.env_bool("CORS_ALLOW_CREDENTIALS", False)
+    if "*" in origins and credentials:
+        logger.warning(
+            "[cors] CORS_ALLOW_ORIGINS='*' con credenciales es inseguro y lo "
+            "rechaza el navegador: se desactivan las credenciales. Listá los "
+            "orígenes explícitos si necesitás credenciales."
+        )
+        credentials = False
+    return origins, credentials
+
+
 app = FastAPI(
     title="Dulse Data Lake API & MCP",
     version="1.0.0",
@@ -75,11 +102,14 @@ app = FastAPI(
 # CORS para que CORS quede por fuera y los 401 también lleven sus headers.
 app.add_middleware(auth.ApiAuthMiddleware, public_paths=auth.PUBLIC_PATHS)
 
-# Habilitar CORS para integración con dashboards web / frontends
+# CORS para integración con dashboards web / frontends. Los orígenes se
+# configuran por entorno (CORS_ALLOW_ORIGINS); el default es local y acotado,
+# nunca `*` con credenciales (ver cors_config).
+_cors_origins, _cors_credentials = cors_config()
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
+    allow_origins=_cors_origins,
+    allow_credentials=_cors_credentials,
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -193,14 +223,24 @@ def issue_token(payload: TokenRequest):
     Alternativa humana a la API key: el token sirve igual para la API REST y
     para el MCP por HTTP/SSE (`Authorization: Bearer <token>`).
     """
+    locked = throttle.login_throttle.locked_for(payload.username)
+    if locked > 0:
+        retry = int(locked) + 1
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail=f"Demasiados intentos fallidos. Prob\u00e1 de nuevo en {retry} segundos.",
+            headers={"Retry-After": str(retry)},
+        )
     try:
         subject = auth.authenticate(payload.username, payload.password)
     except auth.InvalidCredentials as exc:
+        throttle.login_throttle.register_failure(payload.username)
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail=exc.detail,
             headers=exc.headers,
         ) from exc
+    throttle.login_throttle.register_success(payload.username)
     token, expires_in = auth.create_access_token(subject)
     return TokenResponse(access_token=token, expires_in=expires_in)
 

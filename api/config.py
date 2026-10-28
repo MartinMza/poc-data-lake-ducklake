@@ -40,6 +40,14 @@ def env_bool(name: str, default: bool = False) -> bool:
     return raw.strip().lower() in {"1", "true", "yes", "on"}
 
 
+def env_list(name: str, default: tuple[str, ...] = ()) -> tuple[str, ...]:
+    """Lista separada por comas; vacia o ausente cae al default."""
+    raw = env(name)
+    if raw is None or not raw.strip():
+        return tuple(default)
+    return tuple(part.strip() for part in raw.split(",") if part.strip())
+
+
 def env_int(name: str, default: int) -> int:
     raw = env(name)
     if raw is None or not raw.strip():

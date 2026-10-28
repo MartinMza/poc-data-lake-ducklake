@@ -290,12 +290,19 @@ def list_users(conn: psycopg.Connection) -> list[dict[str, Any]]:
         return cur.fetchall()
 
 
+# Hash señuelo: cuando el usuario no existe, está deshabilitado o es de
+# servicio, se verifica igual contra este hash para que el tiempo de respuesta
+# no delate qué usuarios existen (enumeración por timing).
+_DUMMY_PASSWORD_HASH = auth.hash_password(secrets.token_urlsafe(16))
+
+
 def verify_login(conn: psycopg.Connection, username: str, password: str) -> dict[str, Any] | None:
     """Devuelve la fila del usuario si las credenciales son válidas."""
     row = get_user(conn, (username or "").strip())
-    if row is None or row["disabled_at"] is not None:
-        return None
-    if row["role"] == "service":
+    if row is None or row["disabled_at"] is not None or row["role"] == "service":
+        # Quemar el mismo tiempo que un login real: verificar contra el señuelo
+        # y recién después negar. No cortar antes, para no filtrar por timing.
+        auth.verify_password(_DUMMY_PASSWORD_HASH, password or "")
         return None
     if not auth.verify_password(row["password_hash"], password or ""):
         return None
