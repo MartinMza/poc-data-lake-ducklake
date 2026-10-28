@@ -140,3 +140,18 @@ T13 (S9): la documentación deja de ser pública. `docs_url`, `redoc_url` y
 `openapi_url` se apagan en FastAPI y se sirven con guarda propia: sin sesión del
 panel, 303 a `/auth/panel/entrar?next=<ruta>`. El `next` se valida (sólo rutas
 locales, sin `//` ni `://`) y una contraseña temporal pendiente manda sobre él.
+
+L10. Pedido, textual: "agregar la validacion de los nombres".
+
+T14 (S11): `validate_username` en `auth_db` — 3 a 64 caracteres, sólo letras,
+números, punto, guion y guion bajo — aplicada en `create_user`, que es el único
+punto de alta (panel, primera configuración y migración del `.env`).
+
+- los nombres inválidos que ya existen **no se renombran solos**: el arranque los
+  lista con el `UPDATE` sugerido (`invalid_usernames`), porque cambiar una
+  identidad es decisión del humano;
+- la migración del entorno omite un nombre inválido y lo anota en vez de romper
+  el arranque;
+- los formularios llevan `pattern` + `title` para avisar antes de enviar.
+
+4 tests nuevos (100 en total).

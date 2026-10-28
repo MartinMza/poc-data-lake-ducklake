@@ -318,6 +318,8 @@ deja de servir. Un usuario deshabilitado no puede usar el link.
 - máximo **5 API keys activas** por usuario;
 - vencimiento entre **1 y 180 días**;
 - contraseña de al menos **12 caracteres** y distinta del nombre de usuario;
+- usuario de **3 a 64 caracteres**: letras, números, punto, guion y guion bajo
+  (sin espacios ni acentos);
 - el password se guarda hasheado (PBKDF2) y de cada key sólo queda el hash;
 - los campos de contraseña tienen botón **Ver** para revisarlos antes de guardar;
 - **resetear la contraseña corta las sesiones del panel del usuario, no sus API keys**;

@@ -33,6 +33,15 @@ async def lifespan(app: FastAPI):
     else:
         for note in state["notes"]:
             logger.warning("[auth] migración: %s", note)
+        for name in state.get("invalid_usernames") or []:
+            logger.warning(
+                "[auth] el usuario %r no cumple la regla de nombres (%s). "
+                "Sigue funcionando, pero no se puede volver a crear: renombralo con "
+                "UPDATE users SET username = ... WHERE username = %r;",
+                name,
+                auth_db.USERNAME_RULE,
+                name,
+            )
         if state["setup_token"]:
             logger.warning("[auth] %s", "=" * 66)
             logger.warning("[auth] PRIMER ARRANQUE: todavía no hay superAdmin.")

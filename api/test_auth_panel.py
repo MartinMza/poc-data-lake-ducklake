@@ -503,3 +503,14 @@ def test_change_password_form_offers_reveal_for_every_field(client):
     page = client.get(f"{PANEL}/password").text
     for field_id in ("current", "password", "password2"):
         assert f'data-reveal="{field_id}"' in page
+
+
+def test_the_panel_rejects_a_username_with_spaces(client):
+    _login_admin(client)
+    response = client.post(
+        f"{PANEL}/usuarios", data={"username": "Pepe Luis", "role": "user", "mode": "link"}
+    )
+    assert response.status_code == 400
+    assert "sin espacios" in response.text
+    with auth_db.connection() as conn:
+        assert auth_db.get_user(conn, "Pepe Luis") is None

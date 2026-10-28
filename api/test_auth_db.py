@@ -286,3 +286,41 @@ def test_un_usuario_deshabilitado_no_puede_usar_el_link(conn):
     assert auth_db.activation_token_user(conn, token) is None
     with pytest.raises(auth_db.AuthDbError):
         auth_db.consume_activation_token(conn, token, "password-nueva-1")
+
+
+# --- validación de nombres de usuario (S11) ----------------------------------
+
+
+def test_un_nombre_con_espacios_se_rechaza_y_no_deja_rastro(conn):
+    with pytest.raises(auth_db.AuthDbError, match="sin espacios"):
+        auth_db.create_user(conn, username="Pepe Luis", password="secreto-1234")
+    assert auth_db.get_user(conn, "Pepe Luis") is None
+
+
+def test_nombres_validos_e_invalidos():
+    for bueno in ("pepe.luis", "pepe_luis", "pepe-luis", "Pepe2", "ana"):
+        assert auth_db.validate_username(bueno) == bueno
+    for malo, motivo in (
+        ("", "vacío"),
+        ("ab", "3 y 64"),
+        ("a" * 65, "3 y 64"),
+        ("pepe luis", "sin espacios"),
+        ("pepe@luis", "sin espacios"),
+        ("pepé", "sin espacios"),
+    ):
+        with pytest.raises(auth_db.AuthDbError, match=motivo):
+            auth_db.validate_username(malo)
+
+
+def test_los_nombres_invalidos_que_ya_existen_se_detectan(conn):
+    """La validación no toca lo que ya está: sólo lo reporta."""
+    conn.execute("DELETE FROM users WHERE username = 'Viejo Usuario'")
+    conn.execute(
+        """
+        INSERT INTO users (username, password_hash, role) VALUES ('Viejo Usuario', 'x', 'user')
+        """
+    )
+    conn.commit()
+    assert "Viejo Usuario" in auth_db.invalid_usernames(conn)
+    conn.execute("DELETE FROM users WHERE username = 'Viejo Usuario'")
+    conn.commit()

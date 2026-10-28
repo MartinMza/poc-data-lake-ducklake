@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import hashlib
 import os
+import re
 import secrets
 from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
@@ -157,6 +158,36 @@ def now() -> datetime:
     return datetime.now(timezone.utc)
 
 
+# --- nombres de usuario -----------------------------------------------------
+
+USERNAME_PATTERN = re.compile(r"^[A-Za-z0-9._-]{3,64}$")
+USERNAME_RULE = (
+    "El usuario debe tener entre 3 y 64 caracteres: letras, números, punto, "
+    "guion y guion bajo (sin espacios ni acentos)."
+)
+
+
+def validate_username(username: str) -> str:
+    """Reglas de nombre de usuario. Devuelve el nombre si es aceptable."""
+    value = (username or "").strip()
+    if not value:
+        raise AuthDbError("El usuario no puede estar vacío.")
+    if not USERNAME_PATTERN.fullmatch(value):
+        raise AuthDbError(USERNAME_RULE)
+    return value
+
+
+def invalid_usernames(conn: psycopg.Connection) -> list[str]:
+    """Nombres que ya están en la base y no cumplen la regla actual.
+
+    No se renombran solos: un cambio de identidad es del humano. El arranque los
+    reporta para que se decida qué hacer.
+    """
+    with conn.cursor() as cur:
+        cur.execute("SELECT username FROM users ORDER BY username")
+        return [row["username"] for row in cur.fetchall() if not USERNAME_PATTERN.fullmatch(row["username"])]
+
+
 # --- passwords --------------------------------------------------------------
 
 
@@ -198,9 +229,7 @@ def create_user(
     Con `must_change_password=True` la credencial es de un solo uso: el usuario
     entra y el panel lo obliga a definir una nueva antes de tocar nada más.
     """
-    username = (username or "").strip()
-    if not username:
-        raise AuthDbError("El usuario no puede estar vacío.")
+    username = validate_username(username)
     if not password:
         raise AuthDbError("El password no puede estar vacío.")
     validate_password(password, username=username)
@@ -672,7 +701,12 @@ def migrate_legacy_env(conn: psycopg.Connection) -> list[str]:
     if not legacy_users and not legacy_keys:
         return notes
 
-    for username, secret in legacy_users.items():
+    for raw_username, secret in legacy_users.items():
+        try:
+            username = validate_username(raw_username)
+        except AuthDbError as exc:
+            notes.append(f"usuario {raw_username!r} del entorno omitido: {exc}")
+            continue
         password_hash = (
             secret if secret.startswith(f"{PBKDF2_PREFIX}$") else auth.hash_password(secret)
         )
@@ -761,6 +795,20 @@ def bootstrap() -> dict[str, Any]:
             notes = migrate_legacy_env(conn)
             needs_setup = not has_superadmin(conn)
             setup_token = issue_setup_token(conn) if needs_setup else None
-        return {"available": True, "needs_setup": needs_setup, "setup_token": setup_token, "notes": notes}
+            invalid = invalid_usernames(conn)
+        return {
+            "available": True,
+            "needs_setup": needs_setup,
+            "setup_token": setup_token,
+            "notes": notes,
+            "invalid_usernames": invalid,
+        }
     except psycopg.Error as exc:
-        return {"available": False, "error": str(exc), "needs_setup": False, "setup_token": None, "notes": []}
+        return {
+            "available": False,
+            "error": str(exc),
+            "needs_setup": False,
+            "setup_token": None,
+            "notes": [],
+            "invalid_usernames": [],
+        }

@@ -25,7 +25,9 @@
     <div class="field">
       <label for="username">Usuario administrador</label>
       <input id="username" name="username" type="text" value="{{ username or 'admin' }}"
-             autocomplete="username" required>
+             autocomplete="username" required maxlength="64"
+             pattern="[A-Za-z0-9._-]{{3,64}}"
+             title="3 a 64 caracteres: letras, números, punto, guion y guion bajo">
     </div>
     <div class="field">
       <label for="password">Contraseña (mínimo {{ min_password }} caracteres)</label>
