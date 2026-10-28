@@ -16,6 +16,7 @@
   <div class="card">
     <h2>Crear API key</h2>
     <form hx-post="/auth/panel/keys" hx-target="#seccion-keys" hx-swap="outerHTML">
+      <input type="hidden" name="csrf" value="{{ user.csrf_token }}">
       <div class="row">
         <div class="field">
           <label for="label">Para qué es</label>

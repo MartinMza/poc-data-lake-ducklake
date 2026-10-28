@@ -12,7 +12,7 @@ from urllib.parse import urlsplit
 import pytest
 from fastapi.testclient import TestClient
 
-from api import auth_db, test_support
+from api import auth_db, auth_panel, test_support
 from api.main import app
 from api.test_support import (
     PASSWORD,
@@ -25,6 +25,13 @@ from api.test_support import (
 PANEL = "/auth/panel"
 KEY_RE = re.compile(r'<code id="nueva-key">([^<]+)</code>')
 CRED_RE = re.compile(r'<code id="nueva-cred">([^<]+)</code>')
+
+
+@pytest.fixture(autouse=True)
+def _bypass_csrf(monkeypatch):
+    """CSRF tiene su propia suite (test_csrf.py). Estos tests cubren la lógica
+    del panel, no la validación del token, así que se neutraliza acá."""
+    monkeypatch.setattr(auth_panel, "_require_csrf", lambda *args, **kwargs: None)
 
 
 @pytest.fixture(scope="module", autouse=True)

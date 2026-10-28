@@ -11,12 +11,13 @@ solo uso.
 
 from __future__ import annotations
 
+import hmac
 import os
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlsplit
 
-from fastapi import APIRouter, Form, Request, Response, status
+from fastapi import APIRouter, Form, HTTPException, Request, Response, status
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 
@@ -54,6 +55,25 @@ def session_user(request: Request) -> dict[str, Any] | None:
 
 # Alias interno: el módulo se lee mejor con el nombre corto.
 _session_user = session_user
+
+
+def _csrf_ok(user: dict[str, Any], supplied: str | None) -> bool:
+    """Valida el token CSRF de la sesión (comparación en tiempo constante)."""
+    expected = str((user or {}).get("csrf_token") or "")
+    candidate = str(supplied or "")
+    if not expected or not candidate:
+        return False
+    return hmac.compare_digest(candidate, expected)
+
+
+def _require_csrf(request: Request, user: dict[str, Any], form_csrf: str = "") -> None:
+    """Corta un POST autenticado sin token CSRF válido (form o header HTMX)."""
+    supplied = form_csrf or request.headers.get("x-csrf-token", "")
+    if not _csrf_ok(user, supplied):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Token CSRF inválido o ausente. Recargá la página e intentá de nuevo.",
+        )
 
 
 def safe_next(value: str) -> str:
@@ -195,7 +215,10 @@ def login_submit(
 
 
 @router.post("/salir")
-def logout(request: Request) -> Response:
+def logout(request: Request, csrf: str = Form("")) -> Response:
+    user = _session_user(request)
+    if user is not None:
+        _require_csrf(request, user, csrf)
     token = request.cookies.get(COOKIE_NAME)
     if token:
         with auth_db.connection() as conn:
@@ -330,10 +353,12 @@ def password_submit(
     current: str = Form(""),
     password: str = Form(""),
     password2: str = Form(""),
+    csrf: str = Form(""),
 ) -> Response:
     user = _session_user(request)
     if user is None:
         return _redirect(ENTRY_PATH)
+    _require_csrf(request, user, csrf)
 
     def fail(message: str) -> Response:
         return _render(
@@ -419,8 +444,10 @@ def create_key(
     request: Request,
     label: str = Form(""),
     expires_in_days: int = Form(auth_db.MAX_EXPIRY_DAYS),
+    csrf: str = Form(""),
 ) -> Response:
     user = require_session(request)
+    _require_csrf(request, user, csrf)
     with auth_db.connection() as conn:
         try:
             key, _row = auth_db.create_api_key(
@@ -435,8 +462,9 @@ def create_key(
 
 
 @router.post("/keys/{key_id}/rotar")
-def rotate_key(request: Request, key_id: str) -> Response:
+def rotate_key(request: Request, key_id: str, csrf: str = Form("")) -> Response:
     user = require_session(request)
+    _require_csrf(request, user, csrf)
     with auth_db.connection() as conn:
         try:
             key, _row = auth_db.rotate_api_key(conn, key_id=key_id, user_id=user["id"])
@@ -446,8 +474,9 @@ def rotate_key(request: Request, key_id: str) -> Response:
 
 
 @router.post("/keys/{key_id}/revocar")
-def revoke_key(request: Request, key_id: str) -> Response:
+def revoke_key(request: Request, key_id: str, csrf: str = Form("")) -> Response:
     user = require_session(request)
+    _require_csrf(request, user, csrf)
     with auth_db.connection() as conn:
         try:
             auth_db.revoke_api_key(conn, key_id=key_id, user_id=user["id"])
@@ -530,8 +559,10 @@ def create_user(
     username: str = Form(""),
     role: str = Form("user"),
     mode: str = Form("link"),
+    csrf: str = Form(""),
 ) -> Response:
     user = _require_superadmin(request)
+    _require_csrf(request, user, csrf)
     mode = "random" if mode == "random" else "link"
     with auth_db.connection() as conn:
         try:
@@ -553,8 +584,9 @@ def create_user(
 
 
 @router.post("/usuarios/{user_id}/reset")
-def reset_password(request: Request, user_id: str, mode: str = Form("link")) -> Response:
+def reset_password(request: Request, user_id: str, mode: str = Form("link"), csrf: str = Form("")) -> Response:
     user = _require_superadmin(request)
+    _require_csrf(request, user, csrf)
     mode = "random" if mode == "random" else "link"
     with auth_db.connection() as conn:
         with conn.cursor() as cur:
@@ -571,8 +603,9 @@ def reset_password(request: Request, user_id: str, mode: str = Form("link")) -> 
 
 
 @router.post("/usuarios/{user_id}/deshabilitar")
-def disable_user(request: Request, user_id: str) -> Response:
+def disable_user(request: Request, user_id: str, csrf: str = Form("")) -> Response:
     user = _require_superadmin(request)
+    _require_csrf(request, user, csrf)
     # Auto-deshabilitarse es quedar afuera para siempre: se corta acá, no en la UI.
     if str(user_id) == str(user["id"]):
         return _users_section(

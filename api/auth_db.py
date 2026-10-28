@@ -76,6 +76,7 @@ CREATE TABLE IF NOT EXISTS sessions (
     id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
     user_id uuid NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     token_sha256 text NOT NULL UNIQUE,
+    csrf_token text NOT NULL DEFAULT '',
     created_at timestamptz NOT NULL DEFAULT now(),
     expires_at timestamptz NOT NULL
 );
@@ -103,7 +104,7 @@ SCHEMA_MIGRATIONS_SQL = """
 ALTER TABLE users ADD COLUMN IF NOT EXISTS must_change_password boolean NOT NULL DEFAULT false;
 ALTER TABLE users ADD COLUMN IF NOT EXISTS password_changed_at timestamptz;
 ALTER TABLE setup_tokens ADD COLUMN IF NOT EXISTS purpose text NOT NULL DEFAULT 'setup';
-ALTER TABLE setup_tokens ADD COLUMN IF NOT EXISTS user_id uuid REFERENCES users(id) ON DELETE CASCADE;
+ALTER TABLE sessions ADD COLUMN IF NOT EXISTS csrf_token text NOT NULL DEFAULT '';
 """
 
 
@@ -605,13 +606,16 @@ def authenticate_api_key(conn: psycopg.Connection, key: str) -> dict[str, Any] |
 
 def create_session(conn: psycopg.Connection, user_id: str) -> str:
     token = secrets.token_urlsafe(32)
+    # Token CSRF por sesión (sincronizador): se guarda con la sesión y se valida
+    # contra el form/header en cada POST autenticado. Se rota al renovar sesión.
+    csrf_token = secrets.token_urlsafe(32)
     with conn.cursor() as cur:
         cur.execute(
             """
-            INSERT INTO sessions (user_id, token_sha256, expires_at)
-            VALUES (%s, %s, now() + %s * interval '1 minute')
+            INSERT INTO sessions (user_id, token_sha256, csrf_token, expires_at)
+            VALUES (%s, %s, %s, now() + %s * interval '1 minute')
             """,
-            (user_id, _sha256_hex(token), SESSION_TTL_MINUTES),
+            (user_id, _sha256_hex(token), csrf_token, SESSION_TTL_MINUTES),
         )
     conn.commit()
     return token
@@ -623,7 +627,7 @@ def session_user(conn: psycopg.Connection, token: str) -> dict[str, Any] | None:
     with conn.cursor() as cur:
         cur.execute(
             """
-            SELECT u.id, u.username, u.role, u.must_change_password
+            SELECT u.id, u.username, u.role, u.must_change_password, s.csrf_token
               FROM sessions s JOIN users u ON u.id = s.user_id
              WHERE s.token_sha256 = %s AND s.expires_at > now() AND u.disabled_at IS NULL
             """,

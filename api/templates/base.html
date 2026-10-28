@@ -120,7 +120,7 @@
   .htmx-request .htmx-indicator { display: inline; }
 </style>
 </head>
-<body>
+<body{% if user %} hx-headers='{"X-CSRF-Token": "{{ user.csrf_token }}"}'{% endif %}>
 {% if user %}
 <header class="top">
   <div class="brand">Dulse <span>· panel de acceso</span></div>
@@ -133,7 +133,7 @@
   </nav>
   <div class="who">
     <span class="badge {% if user.role == 'superadmin' %}ok{% endif %}">{{ user.username }} · {{ user.role }}</span>
-    <form method="post" action="/auth/panel/salir"><button class="small ghost" type="submit">Salir</button></form>
+    <form method="post" action="/auth/panel/salir"><input type="hidden" name="csrf" value="{{ user.csrf_token }}"><button class="small ghost" type="submit">Salir</button></form>
   </div>
 </header>
 {% endif %}

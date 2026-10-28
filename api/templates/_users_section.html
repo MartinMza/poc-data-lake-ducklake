@@ -26,6 +26,7 @@
   <div class="card">
     <h2>Agregar usuario</h2>
     <form hx-post="/auth/panel/usuarios" hx-target="#seccion-usuarios" hx-swap="outerHTML">
+      <input type="hidden" name="csrf" value="{{ user.csrf_token }}">
       <div class="row">
         <div class="field">
           <label for="username">Usuario</label>

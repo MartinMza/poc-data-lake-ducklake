@@ -78,6 +78,10 @@ Reglas:
   durante `AUTH_LOGIN_LOCKOUT_SECONDS`. Es por-proceso (un worker); con varios
   workers hace falta un store compartido. El login es constant-time para no
   filtrar qué usuarios existen.
+- **CSRF**: los POST autenticados del panel exigen el token de la sesión (campo
+  `csrf` o header `X-CSRF-Token` que manda HTMX); sin él responden `403`. Los
+  formularios pre-autenticación (login, setup, activación) no tienen sesión y
+  quedan apoyados en `SameSite=Lax`.
 - El transporte MCP por **stdio** (`python -m api.mcp_server`) corre como
   proceso local del operador y no pasa por esta autenticación.
 
@@ -158,7 +162,7 @@ Herramientas expuestas:
 Recursos: `lake://catalog` (inventario del lago) y `lake://sqlserver/tables`
 (inventario SQL Server con marca de última carga).
 
-### Claude Desktop / stdio (sin auth, proceso local)
+### Claude Desktop / Antigravity / stdio (sin auth, proceso local)
 
 ```json
 {
@@ -167,6 +171,7 @@ Recursos: `lake://catalog` (inventario del lago) y `lake://sqlserver/tables`
       "command": "/home/mmediza/orca/workspaces/POC-Data-Lake/dulse/api/.venv/bin/python",
       "args": ["-m", "api.mcp_server"],
       "env": {
+        "PYTHONPATH": "/home/mmediza/orca/workspaces/POC-Data-Lake/dulse",
         "CATALOG_HOST": "localhost",
         "CATALOG_PORT": "5433",
         "GARAGE_S3_ENDPOINT": "http://localhost:3900"
