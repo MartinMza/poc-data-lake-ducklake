@@ -67,6 +67,22 @@ def get_connection() -> duckdb.DuckDBPyConnection:
                 con.execute(f"ATTACH 'ducklake:postgres:{cat}' AS lake")
             else:
                 raise
+
+        # Endurecimiento del sandbox (defensa en profundidad, junto a
+        # validate_sql). Debe ir DESPUÉS del ATTACH y del CREATE SECRET: el
+        # acceso al catálogo (postgres) y a los datos (S3) ya quedó montado.
+        #
+        # - disabled_filesystems='LocalFileSystem': corta toda lectura del
+        #   filesystem local (functions como read_text/read_csv y replacement
+        #   scans tipo FROM '/etc/passwd.parquet'). S3FileSystem queda activo,
+        #   así que las lecturas del lago siguen andando. Contrapartida
+        #   aceptada: el spill a disco local queda deshabilitado; para el subset
+        #   del PoC las queries entran en memoria y, si no, fallan con un error
+        #   claro en vez de exponer el filesystem.
+        # - lock_configuration=true: impide revertir lo anterior desde una
+        #   query (además SET ya está en FORBIDDEN_KEYWORDS). Va al final.
+        con.execute("SET disabled_filesystems='LocalFileSystem'")
+        con.execute("SET lock_configuration=true")
         _con = con
         return _con
 
@@ -112,6 +128,48 @@ FORBIDDEN_KEYWORDS = {
 
 ALLOWED_START_KEYWORDS = ("SELECT", "WITH", "DESCRIBE", "SUMMARIZE", "EXPLAIN")
 
+# Funciones de DuckDB que abren archivos o estado externo. La denylist de
+# keywords sólo frena escritura/admin: una query que empieza con SELECT puede
+# leer `/app/.env` o `/etc/passwd` con `read_text`/`read_csv`, hacer SSRF con
+# `read_csv('http://...')` o enumerar secretos con `duckdb_secrets()`. Nada de
+# esto lo necesita una consulta analítica sobre el lago (que referencia
+# `lake.bronze.*`), así que se rechaza por nombre de función.
+FORBIDDEN_FUNCTIONS = (
+    "read_csv",
+    "read_csv_auto",
+    "read_parquet",
+    "parquet_scan",
+    "read_json",
+    "read_json_auto",
+    "read_json_objects",
+    "read_ndjson",
+    "read_ndjson_auto",
+    "read_ndjson_objects",
+    "read_text",
+    "read_blob",
+    "read_xlsx",
+    "read_arrow",
+    "glob",
+    "sniff_csv",
+    "parquet_metadata",
+    "parquet_schema",
+    "parquet_file_metadata",
+    "parquet_kv_metadata",
+    "parquet_bloom_probe",
+    "iceberg_scan",
+    "iceberg_metadata",
+    "iceberg_snapshots",
+    "delta_scan",
+    "st_read",
+    "st_readosm",
+    "duckdb_secrets",
+    "which_secret",
+    "load_aws_credentials",
+)
+_FORBIDDEN_FUNCTION_RE = re.compile(
+    r"\b(?:" + "|".join(FORBIDDEN_FUNCTIONS) + r")\s*\(", re.IGNORECASE
+)
+
 
 def validate_sql(sql: str) -> str:
     """Valida que una consulta sea estrictamente de solo lectura."""
@@ -142,6 +200,24 @@ def validate_sql(sql: str) -> str:
     if found_forbidden:
         raise ValueError(
             f"Operación prohibida: Se detectaron comandos no permitidos de escritura o administración: {', '.join(sorted(found_forbidden))}."
+        )
+
+    # Bloquear funciones que leen archivos o estado externo (ver
+    # FORBIDDEN_FUNCTIONS): aunque la query sea un SELECT, no deben poder abrir
+    # el filesystem del contenedor ni hacer SSRF.
+    reader = _FORBIDDEN_FUNCTION_RE.search(clean)
+    if reader is not None:
+        raise ValueError(
+            "Operación prohibida: no se permite leer archivos ni estado externo "
+            f"(función '{reader.group(0)[:-1].strip()}')."
+        )
+
+    # Bloquear URLs/rutas externas en literales: cierra SSRF (`http(s)://`) y el
+    # acceso cruzado a otros buckets (`s3://`). Una consulta sobre el lago nunca
+    # necesita un esquema `://`.
+    if "://" in clean:
+        raise ValueError(
+            "Operación prohibida: no se permiten URLs ni rutas externas (esquema '://')."
         )
 
     return clean

@@ -81,6 +81,9 @@ def run_query(sql: str, limit: int = 100) -> dict[str, Any]:
     Guardrails:
     - Solo sentencias SELECT, WITH, DESCRIBE, SUMMARIZE, EXPLAIN.
     - DDL/DML (DROP, DELETE, INSERT, UPDATE, etc.) están bloqueados.
+    - Sin lectura de archivos ni estado externo: funciones como read_csv/
+      read_text/read_parquet/glob/duckdb_secrets y las URLs/rutas con esquema
+      '://' (http, https, s3) están bloqueadas.
     - Límite máximo automático de 1000 filas.
     """
     return engine.execute_query(sql=sql, limit=limit)
