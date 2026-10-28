@@ -100,8 +100,12 @@ Más tres tablas internas de `dlt` (`_dlt_loads`, `_dlt_pipeline_state`,
 
 ### Autenticación: dos caminos, uno obligatorio
 
-Todo pasa por credencial salvo `/health`, `/docs`, `/openapi.json`, `/redoc`, `/`,
-`/static` y `/auth/panel` (el panel se protege con cookie de sesión, no con key).
+Todo pasa por credencial salvo `/health`, `/`, `/static`, `/auth/panel` y
+`POST /auth/token`.
+
+**La documentación (Swagger y `/openapi.json`) ya no es pública**: pide sesión
+del panel. Si no estás logueado te manda a entrar y después te devuelve a donde
+ibas.
 
 | Quién sos | Qué usás | Cómo |
 |---|---|---|
@@ -276,6 +280,7 @@ recargar la página. No hay build, ni npm, ni CDN: `htmx.min.js` vive en
 | Vista | Ruta | Quién entra |
 |---|---|---|
 | Entrar | `/auth/panel/entrar` | todos |
+| Documentación | `/docs` · `/redoc` | con sesión del panel |
 | Mis API keys | `/auth/panel` | con sesión |
 | Mi contraseña | `/auth/panel/password` | con sesión |
 | Usuarios | `/auth/panel/usuarios` | sólo superAdmin |
@@ -314,6 +319,7 @@ deja de servir. Un usuario deshabilitado no puede usar el link.
 - vencimiento entre **1 y 180 días**;
 - contraseña de al menos **12 caracteres** y distinta del nombre de usuario;
 - el password se guarda hasheado (PBKDF2) y de cada key sólo queda el hash;
+- los campos de contraseña tienen botón **Ver** para revisarlos antes de guardar;
 - **resetear la contraseña corta las sesiones del panel del usuario, no sus API keys**;
 - **deshabilitar** corta todo: sesión, keys y JWT en el acto.
 

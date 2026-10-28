@@ -125,3 +125,18 @@ L8. T11 cerrado. Dos capas, porque la UI sola no alcanza:
 
     Verificado en vivo: auto-deshabilitado 400 y la cuenta sigue activa con la
     sesión intacta; otro superAdmin 400; un `user` común 200. 89 tests verdes.
+
+L9. Pedido nuevo, textual:
+
+> 1- Quiero que en los formularios donde este la contraseña, para crear y poner la
+> contraseña, como usuario quiero poder ver la contraseña con un boton de ver contraseña.
+> 2- El swagger tiene que estar oculto y solo poder verse si esta loggeado
+
+T12 (S10): botón **Ver/Ocultar** en todos los campos de contraseña (entrar,
+primera configuración, activación y cambio de contraseña). Un solo handler por
+delegación en `base.html`, sin dependencias: alterna `type` y `aria-pressed`.
+
+T13 (S9): la documentación deja de ser pública. `docs_url`, `redoc_url` y
+`openapi_url` se apagan en FastAPI y se sirven con guarda propia: sin sesión del
+panel, 303 a `/auth/panel/entrar?next=<ruta>`. El `next` se valida (sólo rutas
+locales, sin `//` ni `://`) y una contraseña temporal pendiente manda sobre él.

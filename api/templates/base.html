@@ -5,6 +5,20 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>{% block title %}Panel de acceso{% endblock %} · Dulse Data Lake</title>
 <script src="/static/htmx.min.js" defer></script>
+<script defer>
+  // Botón "ver contraseña": alterna el tipo del input, sin dependencias.
+  document.addEventListener("click", (event) => {
+    const button = event.target.closest("[data-reveal]");
+    if (!button) return;
+    const input = document.getElementById(button.dataset.reveal);
+    if (!input) return;
+    const hidden = input.type === "password";
+    input.type = hidden ? "text" : "password";
+    button.textContent = hidden ? "Ocultar" : "Ver";
+    button.setAttribute("aria-pressed", String(hidden));
+    input.focus();
+  });
+</script>
 <style>
   :root {
     --bg: #0f1115; --card: #171a21; --card-2: #1e222b; --line: #2b3140;
@@ -49,6 +63,14 @@
   }
   input:focus, select:focus { outline: 2px solid var(--acc); outline-offset: 1px; border-color: var(--acc); }
   .field { margin-bottom: 14px; }
+  .pwd { position: relative; }
+  .pwd input { padding-right: 74px; }
+  .pwd .reveal {
+    position: absolute; top: 50%; right: 5px; transform: translateY(-50%);
+    padding: 4px 9px; font-size: 12px; background: transparent; color: var(--dim);
+    border: 1px solid transparent; border-radius: 6px;
+  }
+  .pwd .reveal:hover { color: var(--txt); border-color: var(--line); }
   .row { display: flex; gap: 12px; flex-wrap: wrap; }
   .row > * { flex: 1 1 160px; }
   button, .btn {

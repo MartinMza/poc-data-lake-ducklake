@@ -27,8 +27,11 @@ def test_health_is_public(client):
     assert response.json()["status"] == "healthy"
 
 
-def test_docs_are_public(client):
-    assert client.get("/openapi.json").status_code == 200
+def test_docs_are_not_public(client):
+    """El esquema de la API no se publica: pide sesión del panel."""
+    response = client.get("/openapi.json", follow_redirects=False)
+    assert response.status_code == 303
+    assert response.headers["location"].startswith("/auth/panel/entrar")
 
 
 def test_panel_login_page_is_public(client):

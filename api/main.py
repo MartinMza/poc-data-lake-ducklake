@@ -9,6 +9,7 @@ from typing import Any
 
 from fastapi import FastAPI, HTTPException, Query, Request, status
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.openapi.docs import get_redoc_html, get_swagger_ui_html
 from fastapi.openapi.utils import get_openapi
 from fastapi.responses import JSONResponse, PlainTextResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
@@ -48,6 +49,11 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title="Dulse Data Lake API & MCP",
     version="1.0.0",
+    # La documentación se sirve con guardas propias (ver más abajo): el esquema
+    # de la API no queda expuesto sin sesión del panel.
+    docs_url=None,
+    redoc_url=None,
+    openapi_url=None,
     lifespan=lifespan,
     description=(
         "API REST y servidor MCP para consultar la data cargada desde SQL Server "
@@ -136,6 +142,39 @@ class QueryResponse(BaseModel):
 def root():
     """Redirige automáticamente a la documentación interactiva Swagger UI."""
     return RedirectResponse(url="/docs")
+
+
+def _docs_gate(request: Request, path: str) -> RedirectResponse | None:
+    """Sin sesión del panel no se ve la documentación: se manda a entrar."""
+    if auth_panel.session_user(request) is not None:
+        return None
+    return RedirectResponse(
+        f"{auth_panel.ENTRY_PATH}?next={path}", status_code=status.HTTP_303_SEE_OTHER
+    )
+
+
+@app.get("/openapi.json", include_in_schema=False)
+def openapi_schema(request: Request):
+    blocked = _docs_gate(request, "/openapi.json")
+    if blocked is not None:
+        return blocked
+    return JSONResponse(app.openapi())
+
+
+@app.get("/docs", include_in_schema=False)
+def swagger_ui(request: Request):
+    blocked = _docs_gate(request, "/docs")
+    if blocked is not None:
+        return blocked
+    return get_swagger_ui_html(openapi_url="/openapi.json", title="Dulse Data Lake · API")
+
+
+@app.get("/redoc", include_in_schema=False)
+def redoc_ui(request: Request):
+    blocked = _docs_gate(request, "/redoc")
+    if blocked is not None:
+        return blocked
+    return get_redoc_html(openapi_url="/openapi.json", title="Dulse Data Lake · API")
 
 
 @app.post("/auth/token", response_model=TokenResponse, tags=["Auth"])

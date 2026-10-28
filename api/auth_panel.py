@@ -45,10 +45,23 @@ def _is_password_route(request: Request) -> bool:
     return urlsplit(request.url.path).path.rstrip("/") == PASSWORD_PATH
 
 
-def _session_user(request: Request) -> dict[str, Any] | None:
+def session_user(request: Request) -> dict[str, Any] | None:
+    """Sesión del panel, o None. Lo usa también la guarda de /docs."""
     token = request.cookies.get(COOKIE_NAME)
     with auth_db.connection() as conn:
         return auth_db.session_user(conn, token or "")
+
+
+# Alias interno: el módulo se lee mejor con el nombre corto.
+_session_user = session_user
+
+
+def safe_next(value: str) -> str:
+    """Sólo rutas locales: evita que `next` se convierta en un redirect abierto."""
+    candidate = (value or "").strip()
+    if candidate.startswith("/") and not candidate.startswith("//") and "://" not in candidate:
+        return candidate
+    return ""
 
 
 def require_session(request: Request) -> dict[str, Any]:
@@ -126,7 +139,14 @@ def login_page(request: Request) -> Response:
         return _redirect(PANEL_PATH)
     ok = request.query_params.get("ok")
     done = "Contraseña actualizada. Entrá con la nueva." if ok == "password" else None
-    return _render(request, "login.html", error=None, done=done, username="")
+    return _render(
+        request,
+        "login.html",
+        error=None,
+        done=done,
+        username="",
+        next_path=safe_next(request.query_params.get("next", "")),
+    )
 
 
 @router.post("/entrar")
@@ -134,6 +154,7 @@ def login_submit(
     request: Request,
     username: str = Form(""),
     password: str = Form(""),
+    next: str = Form(""),
 ) -> Response:
     with auth_db.connection() as conn:
         user = auth_db.verify_login(conn, username, password)
@@ -144,10 +165,12 @@ def login_submit(
                 error="Usuario o contraseña incorrectos.",
                 done=None,
                 username=username,
+                next_path=safe_next(next),
                 status_code=status.HTTP_401_UNAUTHORIZED,
             )
         token = auth_db.create_session(conn, user["id"])
-    target = PASSWORD_PATH if user.get("must_change_password") else PANEL_PATH
+    # La contraseña temporal manda sobre `next`: primero se cambia la clave.
+    target = PASSWORD_PATH if user.get("must_change_password") else (safe_next(next) or PANEL_PATH)
     response = _redirect(target)
     _set_session(response, token)
     return response

@@ -14,12 +14,18 @@
   <form method="post" action="/auth/panel/activar/{{ token }}">
     <div class="field">
       <label for="password">Contraseña (mínimo {{ min_password }} caracteres)</label>
-      <input id="password" name="password" type="password" autocomplete="new-password"
-             autofocus required>
+<div class="pwd">
+  <input id="password" name="password" type="password" autocomplete="new-password"
+               autofocus required>
+  <button type="button" class="reveal" data-reveal="password" aria-pressed="false">Ver</button>
+</div>
     </div>
     <div class="field">
       <label for="password2">Repetir contraseña</label>
-      <input id="password2" name="password2" type="password" autocomplete="new-password" required>
+<div class="pwd">
+  <input id="password2" name="password2" type="password" autocomplete="new-password" required>
+  <button type="button" class="reveal" data-reveal="password2" aria-pressed="false">Ver</button>
+</div>
     </div>
     <button class="primary" type="submit">Guardar y entrar</button>
   </form>

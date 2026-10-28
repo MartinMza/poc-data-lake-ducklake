@@ -373,7 +373,6 @@ def test_panel_does_not_swallow_token_api_or_mcp_routes(client):
     assert data.status_code == 200, "la API de datos no fue capturada por el panel"
     assert isinstance(data.json(), list)
 
-    assert client.get("/docs").status_code == 200
     assert client.get("/health").status_code == 200
 
 
@@ -420,3 +419,87 @@ def test_my_own_row_offers_no_disable_button(client):
     page = client.get(f"{PANEL}/usuarios").text
     assert f"/usuarios/{me['id']}/deshabilitar" not in page
     assert "Mi contraseña" in page, "en su lugar, el camino a cambiarla"
+
+
+# --- Swagger detrás del login (S9) -------------------------------------------
+
+
+def test_docs_require_a_panel_session(browser):
+    """Sin sesión (tarro de cookies limpio) la documentación no se sirve."""
+    for path in ("/docs", "/redoc", "/openapi.json"):
+        response = browser.get(path, follow_redirects=False)
+        assert response.status_code == 303, f"{path} no debería ser público"
+        assert response.headers["location"] == f"{PANEL}/entrar?next={path}"
+
+
+def test_docs_open_once_logged_in(client):
+    _login(client)
+    docs = client.get("/docs")
+    assert docs.status_code == 200
+    assert "swagger" in docs.text.lower()
+    schema = client.get("/openapi.json")
+    assert schema.status_code == 200
+    assert "/api/v1/sqlserver/tables" in schema.json()["paths"]
+    assert client.get("/redoc").status_code == 200
+
+
+def test_login_returns_to_the_requested_page(client):
+    response = client.post(
+        f"{PANEL}/entrar",
+        data={"username": USERNAME, "password": PASSWORD, "next": "/docs"},
+        follow_redirects=False,
+    )
+    assert response.status_code == 303
+    assert response.headers["location"] == "/docs"
+    assert client.get("/docs").status_code == 200
+
+
+def test_login_refuses_to_redirect_off_site(client):
+    response = client.post(
+        f"{PANEL}/entrar",
+        data={"username": USERNAME, "password": PASSWORD, "next": "//evil.example/x"},
+        follow_redirects=False,
+    )
+    assert response.status_code == 303
+    assert response.headers["location"] == PANEL, "un next externo se ignora"
+
+
+def test_temporary_password_wins_over_the_next_parameter(client):
+    with auth_db.connection() as conn:
+        conn.execute("DELETE FROM users WHERE username = 'next-temp'")
+        conn.commit()
+        auth_db.create_user(
+            conn, username="next-temp", password="temporal-1234", must_change_password=True
+        )
+    response = client.post(
+        f"{PANEL}/entrar",
+        data={"username": "next-temp", "password": "temporal-1234", "next": "/docs"},
+        follow_redirects=False,
+    )
+    assert response.headers["location"] == f"{PANEL}/password", "primero cambia la clave"
+
+
+# --- botón de ver contraseña (S10) -------------------------------------------
+
+
+def test_password_fields_offer_a_reveal_button(client):
+    esperado = {
+        f"{PANEL}/entrar": ['"password"'],
+        f"{PANEL}/activar/link-invalido": ['"password"', '"password2"'],
+    }
+    for path, ids in esperado.items():
+        page = client.get(path).text
+        for field_id in ids:
+            assert f'data-reveal={field_id}' in page or f"data-reveal={field_id[1:-1]}" in page, (
+                f"{path} no ofrece ver el campo {field_id}"
+            )
+    setuppage = client.get(f"{PANEL}/configuracion", follow_redirects=False)
+    if setuppage.status_code == 200:
+        assert 'data-reveal="password"' in setuppage.text
+
+
+def test_change_password_form_offers_reveal_for_every_field(client):
+    _login(client)
+    page = client.get(f"{PANEL}/password").text
+    for field_id in ("current", "password", "password2"):
+        assert f'data-reveal="{field_id}"' in page
