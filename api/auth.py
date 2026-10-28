@@ -46,6 +46,11 @@ DEFAULT_TTL_MINUTES = 60
 DEFAULT_ISSUER = "dulse-lake-api"
 JWT_ALGORITHM = "HS256"
 
+# Entropía mínima del secreto HS256. Un secreto corto o adivinable firma tokens
+# válidos igual: con el secreto se forjan JWTs de cualquier usuario, sin tocar la
+# base. 32 caracteres es el piso razonable (`openssl rand -hex 32` = 64).
+MIN_JWT_SECRET_LENGTH = 32
+
 PBKDF2_PREFIX = "pbkdf2_sha256"
 PBKDF2_ITERATIONS = 260_000
 
@@ -130,10 +135,17 @@ def assert_configured() -> None:
     Desde que las credenciales viven en Postgres, lo único que sigue siendo
     configuración de entorno es el secreto que firma los JWT.
     """
-    if not jwt_secret():
+    secret = jwt_secret()
+    if not secret:
         raise RuntimeError(
             "Falta AUTH_JWT_SECRET: sin él no se pueden emitir ni validar los JWT "
             "del panel y de POST /auth/token."
+        )
+    if len(secret) < MIN_JWT_SECRET_LENGTH:
+        raise RuntimeError(
+            f"AUTH_JWT_SECRET es demasiado corto ({len(secret)} caracteres, mínimo "
+            f"{MIN_JWT_SECRET_LENGTH}). Uno débil permite forjar JWTs de cualquier "
+            "usuario: generá uno con `openssl rand -hex 32`."
         )
 
 

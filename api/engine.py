@@ -15,7 +15,7 @@ from typing import Any
 
 import duckdb
 
-from api.config import env as _env
+from api.config import assert_safe_credentials, env as _env
 
 _lock = threading.Lock()
 _con: duckdb.DuckDBPyConnection | None = None
@@ -34,12 +34,17 @@ def get_connection() -> duckdb.DuckDBPyConnection:
         if _con is not None:
             return _con
 
+        catalog_host = _env("CATALOG_HOST", "localhost")
+        catalog_password = _env("CATALOG_PASSWORD", "ducklake")
+        assert_safe_credentials(
+            host=catalog_host, secret=catalog_password, label="Catálogo DuckLake"
+        )
         cat = (
             f"dbname={_env('CATALOG_DB', 'ducklake_catalog')} "
-            f"host={_env('CATALOG_HOST', 'localhost')} "
+            f"host={catalog_host} "
             f"port={_env('CATALOG_PORT', '5433')} "
             f"user={_env('CATALOG_USER', 'ducklake')} "
-            f"password={_env('CATALOG_PASSWORD', 'ducklake')}"
+            f"password={catalog_password}"
         )
         garage_host = _env("GARAGE_HOST", "localhost")
         garage_port = _env("GARAGE_S3_PORT", "3900")

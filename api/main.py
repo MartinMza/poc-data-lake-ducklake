@@ -293,9 +293,12 @@ def list_lake_tables(
     try:
         return engine.list_tables(schemas=schema_list)
     except Exception as exc:
+        # El detalle va al log, no al cliente: la excepción puede traer rutas,
+        # DSNs o nombres internos.
+        logger.exception("Error consultando tablas del lago")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Error consultando tablas del lago: {exc}",
+            detail="Error interno consultando las tablas del lago.",
         ) from exc
 
 
@@ -315,9 +318,10 @@ def describe_lake_table(schema: str, table: str):
             detail=str(exc),
         ) from exc
     except Exception as exc:
+        logger.exception("Error describiendo tabla")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Error describiendo tabla: {exc}",
+            detail="Error interno describiendo la tabla.",
         ) from exc
 
 
@@ -331,9 +335,10 @@ def list_sqlserver_tables():
     try:
         return engine.sqlserver_tables()
     except Exception as exc:
+        logger.exception("Error consultando las tablas de SQL Server")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Error consultando las tablas de SQL Server: {exc}",
+            detail="Error interno consultando las tablas de SQL Server.",
         ) from exc
 
 
@@ -352,9 +357,10 @@ def preview_sqlserver_rows(
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
     except Exception as exc:
+        logger.exception("Error leyendo la tabla %r", table)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Error leyendo la tabla '{table}': {exc}",
+            detail="Error interno leyendo la tabla.",
         ) from exc
 
 
@@ -368,9 +374,10 @@ def list_snapshots(
     try:
         return engine.list_snapshots(limit=limit)
     except Exception as exc:
+        logger.exception("Error obteniendo snapshots de DuckLake")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Error obteniendo snapshots de DuckLake: {exc}",
+            detail="Error interno obteniendo snapshots.",
         ) from exc
 
 
@@ -390,7 +397,10 @@ def run_sql_query(payload: QueryRequest):
             detail=str(exc),
         ) from exc
     except Exception as exc:
+        # La validación (ValueError) devuelve un mensaje propio y seguro; sólo el
+        # error inesperado del motor se oculta y se loguea.
+        logger.exception("Error de ejecución SQL")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Error de ejecución SQL: {exc}",
+            detail="Error interno de ejecución SQL.",
         ) from exc

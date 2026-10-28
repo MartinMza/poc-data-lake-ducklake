@@ -25,7 +25,7 @@ from typing import Any, Iterator
 import psycopg
 from psycopg.rows import dict_row
 
-from api import auth
+from api import auth, config
 
 MAX_ACTIVE_KEYS = 5
 MAX_EXPIRY_DAYS = 180
@@ -124,6 +124,9 @@ def dsn() -> str:
         os.environ.get("AUTH_DB_PASSWORD")
         or os.environ.get("CATALOG_PASSWORD")
         or "ducklake"
+    )
+    config.assert_safe_credentials(
+        host=host, secret=password, label="Base de credenciales"
     )
     return f"host={host} port={port} user={user} password={password} dbname={database_name()}"
 
