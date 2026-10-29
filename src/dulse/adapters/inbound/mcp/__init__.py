@@ -1,0 +1,1 @@
+"""Adaptador MCP (FastMCP)."""

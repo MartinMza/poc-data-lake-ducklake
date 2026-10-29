@@ -29,6 +29,7 @@ RUN pip install --no-cache-dir -r /app/requirements.txt
 # Pre-instalar extensiones de DuckDB (ducklake, postgres, httpfs) en la imagen
 RUN python -c "import duckdb; con = duckdb.connect(); con.execute('INSTALL ducklake; INSTALL postgres; INSTALL httpfs;')"
 
+COPY src /app/src
 COPY api /app/api
 
 ENV PYTHONUNBUFFERED=1 \

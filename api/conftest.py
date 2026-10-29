@@ -8,6 +8,12 @@ prueba es exactamente lo que va a correr en producción.
 from __future__ import annotations
 
 import os
+import sys
+from pathlib import Path
+
+# Layout src/: el paquete dulse vive en src/dulse y no se instala con pip en el
+# venv de desarrollo, así que se agrega la raíz de paquetes al path del proceso.
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 import psycopg
 import pytest
