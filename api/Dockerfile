@@ -32,7 +32,10 @@ RUN python -c "import duckdb; con = duckdb.connect(); con.execute('INSTALL duckl
 COPY src /app/src
 COPY api /app/api
 
-ENV PYTHONUNBUFFERED=1 \
+# src/ en el path para que `dulse.*` sea importable sin depender de que el
+# shim api/main.py inyecte la ruta como efecto colateral.
+ENV PYTHONPATH=/app/src \
+    PYTHONUNBUFFERED=1 \
     API_BIND_HOST=0.0.0.0 \
     API_INTERNAL_PORT=8000
 EXPOSE 8000
