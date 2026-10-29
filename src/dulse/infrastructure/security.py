@@ -189,7 +189,7 @@ def verify_password(stored: str, provided: str) -> bool:
 
 def authenticate(username: str, password: str) -> str:
     """Valida usuario/password contra la base y devuelve el subject."""
-    from api import auth_db  # import local: auth_db importa este módulo
+    from dulse.adapters.outbound import postgres_auth as auth_db  # import local: auth_db importa este módulo
 
     with auth_db.connection() as conn:
         user = auth_db.verify_login(conn, username, password)
@@ -249,7 +249,7 @@ def user_can_authenticate(username: str) -> bool:
     un usuario ya deshabilitado, y el punto de deshabilitarlo es que deje de
     entrar ya. El costo es un roundtrip a Postgres por request con Bearer.
     """
-    from api import auth_db  # import local: auth_db importa este módulo
+    from dulse.adapters.outbound import postgres_auth as auth_db  # import local: auth_db importa este módulo
 
     try:
         with auth_db.connection() as conn:
@@ -261,7 +261,7 @@ def user_can_authenticate(username: str) -> bool:
 
 def _lookup_api_key(candidate: str) -> dict[str, Any] | None:
     """Busca la API key en la base. Sin cache: revocar debe cortar en el acto."""
-    from api import auth_db  # import local: auth_db importa este módulo
+    from dulse.adapters.outbound import postgres_auth as auth_db  # import local: auth_db importa este módulo
 
     try:
         with auth_db.connection() as conn:

@@ -20,6 +20,7 @@ FORBIDDEN_ROOTS = {
     "jinja2",
     "fastmcp",
     "sqlalchemy",
+    "pydantic",
     "pydantic_settings",
     "mcp",
 }
@@ -45,6 +46,22 @@ def test_dominio_no_importa_frameworks_ni_drivers():
         if module.split(".")[0] in FORBIDDEN_ROOTS
     ]
     assert not offenders, f"el dominio importa infraestructura: {offenders}"
+
+
+def test_src_no_importa_los_shims_de_api():
+    """Ningún módulo de src/ puede depender de los shims de api/.
+
+    Eso invertiría la dirección de la arquitectura y sólo funcionaría por
+    accidente mientras los shims existan.
+    """
+    src_dir = Path(__file__).resolve().parents[1] / "src"
+    offenders = [
+        (path.relative_to(src_dir).as_posix(), module)
+        for path in src_dir.rglob("*.py")
+        for module in _imports(path)
+        if module == "api" or module.startswith("api.")
+    ]
+    assert not offenders, f"src/ importa los shims de api: {offenders}"
 
 
 def test_dominio_no_depende_de_adaptadores_ni_infraestructura():
