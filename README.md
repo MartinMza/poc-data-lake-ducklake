@@ -32,8 +32,11 @@ SQL Server (.bak) ──restore──▶ mssql ──bcp/MERGE (fast) o dlt─�
 | Ingesta bronze | `bronze/fast_mssql.py` (principal: bcp → staging → MERGE) y `bronze/pipeline_mssql.py` (fallback dlt) | `bronze/` |
 | Purga de data de ejemplo | deja solo las 7 tablas reales (dry-run por defecto) | `scripts/purge_sample_data.py` |
 | Orquestación | Flow `dulse-medallion`: restore condicional → ingesta MSSQL | `orchestration/` |
-| Servicio | API REST (FastAPI) + MCP (FastMCP) con auth obligatoria | `api/` |
+| Servicio | API REST (FastAPI) + MCP (FastMCP) con auth obligatoria | `src/dulse/` (entrypoints en `api/`) |
 | Operación | backup/restore del lago, time travel, conteos | `scripts/` |
+
+Layout del código, puertos/adaptadores y regla de dependencia:
+[`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).
 
 Versiones fijadas: `postgres:17.6-bookworm`, `dxflrs/garage:v2.4.1`,
 `prefecthq/prefect:3.6.22-python3.12` (server) / `prefect==3.8.8` (cliente),
