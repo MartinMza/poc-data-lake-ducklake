@@ -1,5 +1,12 @@
 # Hallazgos — ingesta rápida MSSQL (`mssql-fast-ingest`)
 
+> **Nota de vigencia (2026-10-26)**: este documento registra los hallazgos
+> históricos del PoC. Después de esas mediciones se retiró el
+> origen Postgres sintético y las capas dbt (`silver`/`gold`), y se agregó
+> autenticación a la API/MCP. El lago hoy contiene solo las 7 tablas reales
+> ingestadas desde SQL Server. Lo que sigue se conserva como evidencia de las
+> corridas originales.
+
 Fecha: 2026-10-16. DB real `FAF12_Kavos` ONLINE, subset 7 tablas (485 557 filas).
 Script: `bronze/fast_mssql.py` (`export` bcp paralelo → `load` COPY a
 `staging_mssql` → `merge` a `bronze` → `parity`/`snapshot`). Detalle operativo

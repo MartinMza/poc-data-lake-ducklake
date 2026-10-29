@@ -24,6 +24,17 @@ API_PORT="${API_PORT:-8000}"
 CATALOG_USER="${CATALOG_USER:-ducklake}"
 CATALOG_DB="${CATALOG_DB:-ducklake_catalog}"
 
+# Auth: los usuarios y las API keys viven en Postgres (`dulse_auth`). Lo único
+# que este script necesita del entorno es el secreto que firma los JWT.
+if [[ -z "${AUTH_JWT_SECRET:-}" ]]; then
+  echo "ERROR: falta AUTH_JWT_SECRET (openssl rand -hex 32) en .env." >&2
+  echo "       Sin él no se pueden emitir ni validar los JWT." >&2
+  exit 1
+fi
+HINT_PANEL="panel de acceso: http://localhost:${API_PORT:-8000}/auth/panel"
+
+AUTH_HINT="$HINT_PANEL"
+
 MODE="host"
 if [[ "${1:-}" == "--docker" ]]; then
   MODE="docker"
@@ -68,6 +79,7 @@ if [[ "$MODE" == "docker" ]]; then
   echo "================================================================="
   echo "  - Documentación Swagger UI: http://${API_HOST}:${API_PORT}/docs"
   echo "  - FastMCP SSE (Agentes AI): http://${API_HOST}:${API_PORT}/mcp/sse"
+  echo "  - Auth (REST y MCP):       ${AUTH_HINT}"
   echo "  - Ver logs del contenedor:  docker compose logs -f lake-api"
   echo "  - Detener servicio:         docker compose stop lake-api"
   echo "================================================================="
@@ -89,7 +101,8 @@ echo "  Dulse Lake API & MCP corriendo en Host (puerto ${API_PORT})"
 echo "================================================================="
 echo "  - Documentación Swagger UI: http://${API_HOST}:${API_PORT}/docs"
 echo "  - FastMCP SSE (Agentes AI): http://${API_HOST}:${API_PORT}/mcp/sse"
-echo "  - FastMCP Stdio (Claude):   api/.venv/bin/python -m api.mcp_server"
+echo "  - FastMCP Stdio (Claude):   api/.venv/bin/python -m api.mcp_server (sin auth: proceso local)"
+echo "  - Auth (REST y MCP):       ${AUTH_HINT}"
 echo "================================================================="
 echo ""
 

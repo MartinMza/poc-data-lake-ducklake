@@ -1,5 +1,0 @@
-.venv/
-target/
-logs/
-dbt_packages/
-.env

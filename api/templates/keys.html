@@ -1,0 +1,10 @@
+{% extends "base.html" %}
+{% block title %}Mis API keys{% endblock %}
+{% block body %}
+<h1>Mis API keys</h1>
+<p class="lead">
+  Las keys son lo que usan los scripts y dashboards para consultar la API.
+  Tu contraseña no sirve para eso.
+</p>
+{% include "_keys_section.html" %}
+{% endblock %}

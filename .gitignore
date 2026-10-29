@@ -15,3 +15,23 @@ mssql-backup/
 # mssql-fast-ingest: TSVs transitorios del export bcp (se regeneran por corrida).
 mssql-fast/
 *.tsv
+
+# Agentes de IA y asistentes
+.agent/
+.agents/
+.claude/
+.cursor/
+.windsurf/
+.copilot/
+.atl/
+.gemini/
+.antigravity/
+
+# OpenCode
+.opencode/
+opencode.json
+opencode.jsonc
+
+# CodeGraph
+.codegraph/
+

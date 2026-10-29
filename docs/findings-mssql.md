@@ -1,5 +1,12 @@
 # Hallazgos — fuente MSSQL real (`mssql-bak-source` 3.2)
 
+> **Nota de vigencia (2026-10-26)**: este documento registra los hallazgos
+> históricos del PoC. Después de esas mediciones se retiró el
+> origen Postgres sintético y las capas dbt (`silver`/`gold`), y se agregó
+> autenticación a la API/MCP. El lago hoy contiene solo las 7 tablas reales
+> ingestadas desde SQL Server. Lo que sigue se conserva como evidencia de las
+> corridas originales.
+
 Fecha: 2026-10-15. Backup real del operador
 `FAF12_Kavos_2026_10_07_233301_411720.bak` (7.5 GB), ERP Kavos/FAF
 (agro, collation `Modern_Spanish_CI_AS`). No se mezcla con

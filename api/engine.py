@@ -1,34 +1,30 @@
-"""Dulse Lake Query Engine — Conexión DuckLake, catálogo, KPIs y SQL Guardrails."""
+"""Dulse Lake Query Engine — conexión DuckLake, catálogo, tablas MSSQL y guardrails SQL.
+
+El lago contiene únicamente las 7 tablas reales ingestadas desde SQL Server
+(`bronze.mssql_bs_*` y `bronze.mssql_d_mart_*`) más los metadatos internos de
+dlt. No hay capas dbt (silver/gold) ni origen sintético.
+"""
 
 from __future__ import annotations
 
 from datetime import date, datetime
 from decimal import Decimal
-import os
 import re
 import threading
 from typing import Any
 
 import duckdb
 
+from api.config import assert_safe_credentials, env as _env
+
 _lock = threading.Lock()
 _con: duckdb.DuckDBPyConnection | None = None
 
-
-def _env(name: str, default: str) -> str:
-    """Obtiene variable de entorno con fallback al archivo .env local si existe."""
-    v = os.getenv(name)
-    if v is not None:
-        return v
-    if os.path.exists(".env"):
-        with open(".env", encoding="utf-8") as fh:
-            for line in fh:
-                line = line.strip()
-                if line and not line.startswith("#") and "=" in line:
-                    k, val = line.split("=", 1)
-                    if k.strip() == name:
-                        return val.strip()
-    return default
+# Esquema único del lago (bronze). silver/gold ya no existen.
+DEFAULT_SCHEMAS: tuple[str, ...] = ("bronze",)
+# Prefijos de las tablas reales de SQL Server y metadatos internos de dlt.
+SQLSERVER_PREFIXES: tuple[str, ...] = ("mssql_",)
+DLT_METADATA_PREFIX = "_dlt_"
 
 
 def get_connection() -> duckdb.DuckDBPyConnection:
@@ -38,12 +34,17 @@ def get_connection() -> duckdb.DuckDBPyConnection:
         if _con is not None:
             return _con
 
+        catalog_host = _env("CATALOG_HOST", "localhost")
+        catalog_password = _env("CATALOG_PASSWORD", "ducklake")
+        assert_safe_credentials(
+            host=catalog_host, secret=catalog_password, label="Catálogo DuckLake"
+        )
         cat = (
             f"dbname={_env('CATALOG_DB', 'ducklake_catalog')} "
-            f"host={_env('CATALOG_HOST', 'localhost')} "
+            f"host={catalog_host} "
             f"port={_env('CATALOG_PORT', '5433')} "
             f"user={_env('CATALOG_USER', 'ducklake')} "
-            f"password={_env('CATALOG_PASSWORD', 'ducklake')}"
+            f"password={catalog_password}"
         )
         garage_host = _env("GARAGE_HOST", "localhost")
         garage_port = _env("GARAGE_S3_PORT", "3900")
@@ -71,6 +72,22 @@ def get_connection() -> duckdb.DuckDBPyConnection:
                 con.execute(f"ATTACH 'ducklake:postgres:{cat}' AS lake")
             else:
                 raise
+
+        # Endurecimiento del sandbox (defensa en profundidad, junto a
+        # validate_sql). Debe ir DESPUÉS del ATTACH y del CREATE SECRET: el
+        # acceso al catálogo (postgres) y a los datos (S3) ya quedó montado.
+        #
+        # - disabled_filesystems='LocalFileSystem': corta toda lectura del
+        #   filesystem local (functions como read_text/read_csv y replacement
+        #   scans tipo FROM '/etc/passwd.parquet'). S3FileSystem queda activo,
+        #   así que las lecturas del lago siguen andando. Contrapartida
+        #   aceptada: el spill a disco local queda deshabilitado; para el subset
+        #   del PoC las queries entran en memoria y, si no, fallan con un error
+        #   claro en vez de exponer el filesystem.
+        # - lock_configuration=true: impide revertir lo anterior desde una
+        #   query (además SET ya está en FORBIDDEN_KEYWORDS). Va al final.
+        con.execute("SET disabled_filesystems='LocalFileSystem'")
+        con.execute("SET lock_configuration=true")
         _con = con
         return _con
 
@@ -116,6 +133,48 @@ FORBIDDEN_KEYWORDS = {
 
 ALLOWED_START_KEYWORDS = ("SELECT", "WITH", "DESCRIBE", "SUMMARIZE", "EXPLAIN")
 
+# Funciones de DuckDB que abren archivos o estado externo. La denylist de
+# keywords sólo frena escritura/admin: una query que empieza con SELECT puede
+# leer `/app/.env` o `/etc/passwd` con `read_text`/`read_csv`, hacer SSRF con
+# `read_csv('http://...')` o enumerar secretos con `duckdb_secrets()`. Nada de
+# esto lo necesita una consulta analítica sobre el lago (que referencia
+# `lake.bronze.*`), así que se rechaza por nombre de función.
+FORBIDDEN_FUNCTIONS = (
+    "read_csv",
+    "read_csv_auto",
+    "read_parquet",
+    "parquet_scan",
+    "read_json",
+    "read_json_auto",
+    "read_json_objects",
+    "read_ndjson",
+    "read_ndjson_auto",
+    "read_ndjson_objects",
+    "read_text",
+    "read_blob",
+    "read_xlsx",
+    "read_arrow",
+    "glob",
+    "sniff_csv",
+    "parquet_metadata",
+    "parquet_schema",
+    "parquet_file_metadata",
+    "parquet_kv_metadata",
+    "parquet_bloom_probe",
+    "iceberg_scan",
+    "iceberg_metadata",
+    "iceberg_snapshots",
+    "delta_scan",
+    "st_read",
+    "st_readosm",
+    "duckdb_secrets",
+    "which_secret",
+    "load_aws_credentials",
+)
+_FORBIDDEN_FUNCTION_RE = re.compile(
+    r"\b(?:" + "|".join(FORBIDDEN_FUNCTIONS) + r")\s*\(", re.IGNORECASE
+)
+
 
 def validate_sql(sql: str) -> str:
     """Valida que una consulta sea estrictamente de solo lectura."""
@@ -148,10 +207,28 @@ def validate_sql(sql: str) -> str:
             f"Operación prohibida: Se detectaron comandos no permitidos de escritura o administración: {', '.join(sorted(found_forbidden))}."
         )
 
+    # Bloquear funciones que leen archivos o estado externo (ver
+    # FORBIDDEN_FUNCTIONS): aunque la query sea un SELECT, no deben poder abrir
+    # el filesystem del contenedor ni hacer SSRF.
+    reader = _FORBIDDEN_FUNCTION_RE.search(clean)
+    if reader is not None:
+        raise ValueError(
+            "Operación prohibida: no se permite leer archivos ni estado externo "
+            f"(función '{reader.group(0)[:-1].strip()}')."
+        )
+
+    # Bloquear URLs/rutas externas en literales: cierra SSRF (`http(s)://`) y el
+    # acceso cruzado a otros buckets (`s3://`). Una consulta sobre el lago nunca
+    # necesita un esquema `://`.
+    if "://" in clean:
+        raise ValueError(
+            "Operación prohibida: no se permiten URLs ni rutas externas (esquema '://')."
+        )
+
     return clean
 
 
-def list_tables(schemas: tuple[str, ...] = ("bronze", "silver", "gold")) -> list[dict[str, Any]]:
+def list_tables(schemas: tuple[str, ...] = DEFAULT_SCHEMAS) -> list[dict[str, Any]]:
     """Lista todas las tablas en los esquemas dados junto con su conteo de filas."""
     con = get_connection()
     results: list[dict[str, Any]] = []
@@ -291,31 +368,109 @@ def execute_query(sql: str, limit: int = 100) -> dict[str, Any]:
     }
 
 
-# Curated KPIs
-def get_monthly_revenue(currency: str | None = None) -> list[dict[str, Any]]:
-    """Retorna métricas de lake.gold.gold_monthly_revenue."""
-    sql = "SELECT * FROM lake.gold.gold_monthly_revenue"
-    if currency:
-        safe_curr = re.sub(r"[^A-Za-z0-9]", "", currency).upper()
-        sql += f" WHERE currency = '{safe_curr}'"
-    sql += " ORDER BY month DESC"
-    res = execute_query(sql, limit=500)
-    cols = res["columns"]
-    return [dict(zip(cols, r)) for r in res["rows"]]
+def _validate_identifier(name: str, *, kind: str) -> str:
+    """Valida un identificador SQL (letras, números y guión bajo)."""
+    if not name or not re.match(r"^[A-Za-z0-9_]+$", name):
+        raise ValueError(f"{kind} inválido: {name!r}")
+    return name
 
 
-def get_customer_revenue(limit: int = 20) -> list[dict[str, Any]]:
-    """Retorna top clientes según lake.gold.gold_customer_revenue."""
-    sql = "SELECT * FROM lake.gold.gold_customer_revenue ORDER BY total_paid DESC"
-    res = execute_query(sql, limit=limit)
-    cols = res["columns"]
-    return [dict(zip(cols, r)) for r in res["rows"]]
+def is_sqlserver_table(table: str) -> bool:
+    """True si la tabla de bronze viene de SQL Server (y no es metadato dlt)."""
+    return table.startswith(SQLSERVER_PREFIXES) and not table.startswith(
+        DLT_METADATA_PREFIX
+    )
 
 
-def get_unit_performance(limit: int = 100) -> list[dict[str, Any]]:
-    """Retorna desempeño de unidades según lake.gold.gold_unit_performance."""
-    sql = "SELECT * FROM lake.gold.gold_unit_performance ORDER BY total_collected DESC"
-    res = execute_query(sql, limit=limit)
-    cols = res["columns"]
-    return [dict(zip(cols, r)) for r in res["rows"]]
+def sqlserver_tables(schema: str = "bronze") -> list[dict[str, Any]]:
+    """Inventario de las tablas cargadas desde SQL Server.
 
+    Devuelve, por tabla: conteo de filas, cantidad de columnas, nombres de
+    columnas y el último `_dlt_load_id` (marca de la corrida de ingesta que
+    escribió la fila más reciente). Excluye los metadatos internos de dlt.
+    """
+    schema = _validate_identifier(schema, kind="Esquema")
+    con = get_connection()
+    inventory: list[dict[str, Any]] = []
+    with _lock:
+        cur = con.cursor()
+        names = [
+            row[0]
+            for row in cur.execute(
+                "SELECT table_name FROM information_schema.tables "
+                "WHERE table_schema = ? ORDER BY table_name",
+                (schema,),
+            ).fetchall()
+        ]
+        for name in names:
+            if not is_sqlserver_table(name):
+                continue
+            columns = cur.execute(
+                "SELECT column_name FROM information_schema.columns "
+                "WHERE table_schema = ? AND table_name = ? "
+                "ORDER BY ordinal_position",
+                (schema, name),
+            ).fetchall()
+            column_names = [col[0] for col in columns]
+            row_count = cur.execute(
+                f'SELECT COUNT(*) FROM lake."{schema}"."{name}"'
+            ).fetchone()[0]
+            last_load_id = None
+            if "_dlt_load_id" in column_names:
+                last_load_id = cur.execute(
+                    f'SELECT MAX(_dlt_load_id) FROM lake."{schema}"."{name}"'
+                ).fetchone()[0]
+            inventory.append(
+                {
+                    "schema": schema,
+                    "table": name,
+                    "row_count": row_count,
+                    "column_count": len(column_names),
+                    "last_load_id": serialize_value(last_load_id),
+                    "columns": column_names,
+                }
+            )
+    return inventory
+
+
+def preview_rows(
+    schema: str,
+    table: str,
+    limit: int = 20,
+    offset: int = 0,
+) -> dict[str, Any]:
+    """Devuelve una página de filas de una tabla del lago (máx. 100 por página)."""
+    schema = _validate_identifier(schema, kind="Esquema")
+    table = _validate_identifier(table, kind="Tabla")
+    safe_limit = max(1, min(limit, 100))
+    safe_offset = max(0, offset)
+
+    con = get_connection()
+    with _lock:
+        cur = con.cursor()
+        columns = cur.execute(
+            "SELECT column_name FROM information_schema.columns "
+            "WHERE table_schema = ? AND table_name = ? ORDER BY ordinal_position",
+            (schema, table),
+        ).fetchall()
+        if not columns:
+            raise KeyError(f"La tabla '{schema}.{table}' no existe en el catálogo.")
+        column_names = [col[0] for col in columns]
+        total_rows = cur.execute(
+            f'SELECT COUNT(*) FROM lake."{schema}"."{table}"'
+        ).fetchone()[0]
+        rows = cur.execute(
+            f'SELECT * FROM lake."{schema}"."{table}" '
+            f"LIMIT {safe_limit} OFFSET {safe_offset}"
+        ).fetchall()
+
+    return {
+        "schema": schema,
+        "table": table,
+        "total_rows": total_rows,
+        "limit": safe_limit,
+        "offset": safe_offset,
+        "row_count": len(rows),
+        "columns": column_names,
+        "rows": [[serialize_value(value) for value in row] for row in rows],
+    }

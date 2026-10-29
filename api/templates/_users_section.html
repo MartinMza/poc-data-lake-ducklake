@@ -1,0 +1,116 @@
+<section id="seccion-usuarios">
+  {% if created %}
+  <div class="alert ok">
+    {% if created.kind == 'link' %}
+      Link de activación de <strong>{{ created.username }}</strong>. Pasáselo tal cual:
+      la persona define su propia contraseña. Vence en {{ activation_hours }} h y sirve una sola vez.
+      <div class="secret">
+        <code id="nueva-cred">{{ created.value }}</code>
+        <button class="small" type="button"
+                onclick="navigator.clipboard.writeText(document.getElementById('nueva-cred').textContent).then(()=>{this.textContent='Copiado';})">Copiar</button>
+      </div>
+    {% else %}
+      Contraseña temporal de <strong>{{ created.username }}</strong>.
+      <strong>Se muestra una sola vez</strong>: al entrar, el panel lo obliga a cambiarla.
+      <div class="secret">
+        <code id="nueva-cred">{{ created.value }}</code>
+        <button class="small" type="button"
+                onclick="navigator.clipboard.writeText(document.getElementById('nueva-cred').textContent).then(()=>{this.textContent='Copiado';})">Copiar</button>
+      </div>
+    {% endif %}
+  </div>
+  {% endif %}
+  {% if error %}<div class="alert error">{{ error }}</div>{% endif %}
+  {% if done %}<div class="alert ok">{{ done }}</div>{% endif %}
+
+  <div class="card">
+    <h2>Agregar usuario</h2>
+    <form hx-post="/auth/panel/usuarios" hx-target="#seccion-usuarios" hx-swap="outerHTML">
+      <input type="hidden" name="csrf" value="{{ user.csrf_token }}">
+      <div class="row">
+        <div class="field">
+          <label for="username">Usuario</label>
+          <input id="username" name="username" type="text" autocomplete="off" required
+                 maxlength="64" pattern="[A-Za-z0-9._-]{{3,64}}"
+                 title="3 a 64 caracteres: letras, números, punto, guion y guion bajo">
+        </div>
+        <div class="field">
+          <label for="role">Rol</label>
+          <select id="role" name="role">
+            <option value="user">user · sólo sus keys</option>
+            <option value="superadmin">superadmin · administra todo</option>
+          </select>
+        </div>
+      </div>
+      <div class="field">
+        <label>Cómo le llega la credencial</label>
+        <div class="row">
+          <label class="badge" style="padding:9px 12px">
+            <input type="radio" name="mode" value="link" checked>
+            Link de activación (elige su contraseña)
+          </label>
+          <label class="badge" style="padding:9px 12px">
+            <input type="radio" name="mode" value="random">
+            Contraseña temporal aleatoria
+          </label>
+        </div>
+      </div>
+      <button class="primary" type="submit">Crear usuario</button>
+      <span class="htmx-indicator">creando…</span>
+    </form>
+  </div>
+
+  <div class="card">
+    <h2>Usuarios</h2>
+    {% if users %}
+    <table>
+      <thead>
+        <tr><th>Usuario</th><th>Rol</th><th>Keys</th><th>Estado</th><th></th></tr>
+      </thead>
+      <tbody>
+      {% for u in users %}
+        <tr>
+          <td><strong>{{ u.username }}</strong></td>
+          <td><span class="badge {% if u.role == 'superadmin' %}ok{% endif %}">{{ u.role }}</span></td>
+          <td>{{ u.active_keys }}</td>
+          <td>
+            {% if u.disabled_at %}<span class="badge bad">deshabilitado</span>
+            {% elif u.must_change_password %}<span class="badge warn">debe cambiar contraseña</span>
+            {% elif u.pending_activation %}<span class="badge warn">link sin usar</span>
+            {% else %}<span class="badge ok">activo</span>{% endif %}
+          </td>
+          <td class="actions">
+            {% if u.id|string == user.id|string %}
+              <span class="hint" style="margin-right:8px">tu cuenta</span>
+              <a class="btn small" href="/auth/panel/password">Mi contraseña</a>
+            {% else %}
+            <button class="small" hx-post="/auth/panel/usuarios/{{ u.id }}/reset"
+                    hx-vals='{"mode": "link"}'
+                    hx-target="#seccion-usuarios" hx-swap="outerHTML"
+                    hx-confirm="¿Generar link de activación nuevo? El anterior deja de servir.">Link nuevo</button>
+            <button class="small" hx-post="/auth/panel/usuarios/{{ u.id }}/reset"
+                    hx-vals='{"mode": "random"}'
+                    hx-target="#seccion-usuarios" hx-swap="outerHTML"
+                    hx-confirm="¿Resetear con contraseña temporal? Cierra sus sesiones del panel.">Resetear</button>
+            {% if u.role != 'superadmin' and not u.disabled_at %}
+            <button class="small danger" hx-post="/auth/panel/usuarios/{{ u.id }}/deshabilitar"
+                    hx-target="#seccion-usuarios" hx-swap="outerHTML"
+                    hx-confirm="¿Deshabilitar? Corta sesión, keys y JWT en el acto.">Deshabilitar</button>
+            {% endif %}
+            {% endif %}
+          </td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+    {% else %}
+    <p class="empty">No hay usuarios todavía.</p>
+    {% endif %}
+  </div>
+
+  <p class="hint">
+    El reset corta las sesiones del panel del usuario; sus API keys siguen funcionando.
+    Deshabilitar corta todo y no se puede deshacer desde acá. Tu propia cuenta y las
+    de superAdmin no se deshabilitan: el panel quedaría sin nadie que lo administre.
+  </p>
+</section>

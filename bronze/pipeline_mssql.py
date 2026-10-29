@@ -1,15 +1,17 @@
 #!/usr/bin/env python3
-"""Pipeline bronze: MSSQL restaurado -> esquema `bronze` en DuckLake (mismo lake).
+"""Pipeline bronze (fallback dlt): SQL Server restaurado -> esquema `bronze` en DuckLake.
 
-OpenSpec `mssql-bak-source`, tareas 4.1-4.2.
-
-Replica el patron de `bronze/pipeline.py` (postgres) para la segunda fuente:
+Fallback/rollback del path rapido `bronze/fast_mssql.py` (principal). Ingesta
+las 7 tablas reales de SQL Server (`FAF12_Kavos`) al esquema `bronze` del
+DuckLake:
 - MISMO DuckLake: mismo catalogo postgres + mismo DATA_PATH
   (attach canonico, `metadata_schema="public"`, `automatic_migration=True`).
 - Fuente `sql_database` de dlt con dialecto `mssql` via pyodbc + ODBC Driver 18.
-- Tablas destino con prefijo `mssql_` en el MISMO esquema `bronze`
-  (no pisa las tablas del pipeline de postgres).
-- Incremental por `updated_at` con merge/upsert por PK (sin duplicados).
+- Tablas destino con prefijo `mssql_` en el esquema `bronze`
+  (dlt snake_casea: `BSMoneda` -> `mssql_bs_moneda`, etc.).
+- Estrategia por tabla (ver MSSQL_TABLES): `merge`/upsert por PK (default con
+  PK), `replace` (sin PK, p.ej. `DMart_*`), `incremental` (legacy, solo si la
+  tabla trae un `updated_at` mantenido).
 - Metadatos de ingesta: dlt aporta `_dlt_load_id` / `_dlt_id` por fila.
 
 Driver (decision 3 del design): pyodbc + Microsoft ODBC Driver 18 instalado
@@ -17,13 +19,13 @@ en user-space (`~/.local/mssql-odbc`, sin root). Este script auto-configura
 `LD_LIBRARY_PATH`/`ODBCSYSINI` si no estan seteadas (ver bronze/README.md).
 
 Uso:
-    bronze/.venv/bin/python bronze/pipeline_mssql.py [--full-refresh] [--tables productos,ventas]
+    bronze/.venv/bin/python bronze/pipeline_mssql.py [--full-refresh] [--tables BSMoneda,BSProducto]
     # env: MSSQL_HOST/PORT/DATABASE/USER + MSSQL_PASSWORD (fallback MSSQL_SA_PASSWORD).
-    # Para el .bak REAL: MSSQL_DATABASE=<db restaurada> + MSSQL_TABLES="Tab:pk:merge,..."
-    #   (+ MSSQL_PIPELINE_NAME distinto para no mezclar estado dlt con la prueba).
-    # Ver bronze/README.md. Sin credenciales en el repo (.env, gitignored).
+    # Default: MSSQL_DATABASE=FAF12_Kavos + las 7 tablas reales (DEFAULT_MSSQL_TABLES).
+    # Override por env MSSQL_TABLES="Tab:pk:merge,..." (+ MSSQL_PIPELINE_NAME para
+    #   estado dlt separado). Sin credenciales en el repo (.env, gitignored).
 
-Solo-PoC-local. No toca `pipeline.py`, `dbt/`, `orchestration/`, `docker-compose.yml`.
+Solo-PoC-local. No toca `orchestration/` ni `docker-compose.yml`.
 """
 
 from __future__ import annotations
@@ -63,22 +65,25 @@ def _bootstrap_odbc_env() -> None:
 
 _bootstrap_odbc_env()
 
-# DB de prueba ya restaurada (slice 4.x). Al llegar el .bak REAL, solo cambia
-# MSSQL_DATABASE (y host/puerto si aplica); el codigo no cambia.
-TABLES: dict[str, str] = {
-    "productos": "sku",
-    "ventas": "id",
-    "movimientos": "mov_id",
-}
 SOURCE_SCHEMA = "dbo"
 TABLE_PREFIX = "mssql_"
 
-# Cursor inicial naive: las columnas updated_at son DATETIME2 (sin tz).
+# Cursor inicial naive para la estrategia incremental legacy (si alguna tabla
+# se pide con `updated_at` DATETIME2 sin tz via MSSQL_TABLES="...:pk:incremental").
 EARLY = datetime(2020, 1, 1)
 
+# Default real: las 7 tablas de SQL Server (`FAF12_Kavos`). Unica fuente de la
+# lista; `bronze/fast_mssql.py` la importa en vez de duplicar la constante.
+DEFAULT_MSSQL_TABLES = (
+    "BSMoneda:MonedaID:merge,BSProducto:ProductoID:merge,"
+    "BSOrganizacion:OrganizacionID:merge,BSTransaccion:TransaccionID:merge,"
+    "BSOperacion:TransaccionID:merge,DMart_Ventas::replace,"
+    "DMart_VentasProductoCliente::replace"
+)
+
 # Tipos MSSQL aceptados sin perdida (spec: mapeo sin perdida + fallo claro
-# ante tipo no soportado). Verificado en RestoredProof: DECIMAL(18,2),
-# DATETIME2(3), BIT, NVARCHAR (+ BIGINT/INT). Ampliacion real (tarea 3.2):
+# ante tipo no soportado). Verificado en FAF12_Kavos: MONEY/DECIMAL/NUMERIC,
+# DATETIME/DATETIME2, BIT, VARCHAR/NVARCHAR (+ BIGINT/INT/SMALLINT/DATE).
 # TEXT/NTEXT (legacy LOB; pyodbc los devuelve como str -> VARCHAR, sin
 # perdida para el PoC; tablas grandes con IMAGE/XML/GEOGRAPHY siguen
 # abortando en check_source_types hasta ampliar el mapeo caso por caso).
@@ -90,29 +95,27 @@ SUPPORTED_TYPES = frozenset({
     "uniqueidentifier",
 })
 
-# Override para el .bak REAL (tarea 3.2): el esquema real no trae updated_at
-# ni rowversion en ninguna tabla (verificado en FAF12_Kavos: 0 columnas
-# rowversion en 779 tablas), asi que la estrategia por tabla se elige via
-# MSSQL_TABLES="Nombre:pk[:estrategia],..." donde estrategia es:
+# El esquema real no trae updated_at ni rowversion en ninguna tabla (verificado
+# en FAF12_Kavos: 0 columnas rowversion en 779 tablas), asi que la estrategia
+# por tabla se elige via MSSQL_TABLES="Nombre:pk[:estrategia],..." donde
+# estrategia es:
 #   merge         full-extract + upsert por PK, sin cursor (default si hay pk)
 #   replace       recarga total, sin PK (default si pk vacio; p.ej. DMart_*)
-#   incremental   cursor updated_at + merge (comportamiento legacy; solo si la
-#                 tabla trae updated_at mantenido, como la DB de prueba)
-# Ej real: MSSQL_TABLES="BSMoneda:MonedaID:merge,BSProducto:ProductoID:merge,DMart_Ventas::replace"
-# Sin MSSQL_TABLES se mantiene el comportamiento legacy (TABLES incremental).
+#   incremental   cursor updated_at + merge (solo si la tabla trae updated_at
+#                 mantenido; ninguna de las 7 reales lo usa)
+# Sin MSSQL_TABLES se usa DEFAULT_MSSQL_TABLES (las 7 tablas reales).
 TABLES_ENV_VAR = "MSSQL_TABLES"
 
 
 def effective_tables() -> tuple[dict[str, str], dict[str, str]]:
     """Devuelve (tablas {nombre: pk}, estrategias {nombre: estrategia}).
 
-    Sin MSSQL_TABLES: legacy (TABLES con incremental por updated_at).
+    Sin MSSQL_TABLES: default real (las 7 tablas de `FAF12_Kavos`).
     """
-    if not os.getenv(TABLES_ENV_VAR, "").strip():
-        return dict(TABLES), {k: "incremental" for k in TABLES}
+    spec = os.getenv(TABLES_ENV_VAR, "").strip() or DEFAULT_MSSQL_TABLES
     tables: dict[str, str] = {}
     strategies: dict[str, str] = {}
-    for entry in os.getenv(TABLES_ENV_VAR, "").split(","):
+    for entry in spec.split(","):
         parts = [p.strip() for p in entry.split(":")]
         name = parts[0] if parts else ""
         pk = parts[1] if len(parts) > 1 else ""
@@ -161,7 +164,7 @@ def build_urls() -> tuple[str, str, str, dict]:
 
     mssql_host = _env("MSSQL_HOST", "localhost")
     mssql_port = _env("MSSQL_PORT", "1433")
-    mssql_db = _env("MSSQL_DATABASE", "RestoredProof")
+    mssql_db = _env("MSSQL_DATABASE", "FAF12_Kavos")
     mssql_user = _env("MSSQL_USER", "sa")
     mssql_pw = os.getenv("MSSQL_PASSWORD") or os.getenv("MSSQL_SA_PASSWORD") or ""
     if not mssql_pw:
@@ -243,7 +246,7 @@ def check_source_types(source_url: str, tables: list[str]) -> None:
             if not rows:
                 raise SystemExit(
                     f"error: {SOURCE_SCHEMA}.{name} no existe en MSSQL "
-                    f"(MSSQL_DATABASE={_env('MSSQL_DATABASE', 'RestoredProof')})"
+                    f"(MSSQL_DATABASE={_env('MSSQL_DATABASE', 'FAF12_Kavos')})"
                 )
             bad = sorted({ty for _, ty in rows if ty.lower() not in SUPPORTED_TYPES})
             if bad:
@@ -327,7 +330,7 @@ def main(argv: list[str] | None = None) -> int:
                     help="subset coma-separado (default: las configuradas)")
     ap.add_argument("--full-refresh", action="store_true",
                     help="recarga con refresh='drop_sources': dropea y resetea "
-                         "SOLO las tablas/recursos mssql_* (no toca tablas postgres)")
+                         "SOLO las tablas/recursos mssql_* de esta corrida")
     ap.add_argument("--pipeline-name",
                     default=os.getenv("MSSQL_PIPELINE_NAME", "bronze_mssql_ingestion"))
     args = ap.parse_args(argv)
@@ -345,9 +348,8 @@ def main(argv: list[str] | None = None) -> int:
     resources = make_resources(source_url, tables, tables_cfg, strategies)
     print(f"pipeline={args.pipeline_name} dataset=bronze tablas={tables}")
     print(f"estrategias={[f'{t}={strategies[t]}' for t in tables]}")
-    # NUNCA pipe.drop(): borraria el dataset `bronze` entero, incluidas las
-    # tablas del pipeline de postgres. refresh='drop_sources' acota el drop
-    # + reset de cursor a los recursos de ESTA corrida (mssql_*).
+    # NUNCA pipe.drop(): borraria el dataset `bronze` entero. refresh='drop_sources'
+    # acota el drop + reset de cursor a los recursos de ESTA corrida (mssql_*).
     info = pipe.run(resources, refresh="drop_sources" if args.full_refresh else None)
     print(info)
 

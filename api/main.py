@@ -2,27 +2,114 @@
 
 from __future__ import annotations
 
+import logging
+from contextlib import asynccontextmanager
+from pathlib import Path
 from typing import Any
 
-from fastapi import FastAPI, HTTPException, Query, status
+from fastapi import FastAPI, HTTPException, Query, Request, status
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import RedirectResponse
+from fastapi.openapi.docs import get_redoc_html, get_swagger_ui_html
+from fastapi.openapi.utils import get_openapi
+from fastapi.responses import JSONResponse, PlainTextResponse, RedirectResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from api import engine
+from api import auth, auth_db, auth_panel, config, engine, throttle
 from api.mcp_server import mcp
+
+logger = logging.getLogger("dulse.auth")
+STATIC_DIR = Path(__file__).resolve().parent / "static"
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Arranque: valida el secreto JWT y prepara la base de credenciales."""
+    auth.assert_configured()
+    state = auth_db.bootstrap()
+    if not state["available"]:
+        logger.error("[auth] base de credenciales no disponible: %s", state.get("error"))
+        logger.error("[auth] sin base no se autentica ninguna request de datos.")
+    else:
+        for note in state["notes"]:
+            logger.warning("[auth] migración: %s", note)
+        for name in state.get("invalid_usernames") or []:
+            logger.warning(
+                "[auth] el usuario %r no cumple la regla de nombres (%s). "
+                "Sigue funcionando, pero no se puede volver a crear: renombralo con "
+                "UPDATE users SET username = ... WHERE username = %r;",
+                name,
+                auth_db.USERNAME_RULE,
+                name,
+            )
+        if state["setup_token"]:
+            logger.warning("[auth] %s", "=" * 66)
+            logger.warning("[auth] PRIMER ARRANQUE: todavía no hay superAdmin.")
+            logger.warning("[auth] Abrí http://localhost:8000/auth/panel/configuracion y cargá este token:")
+            logger.warning("[auth] SETUP TOKEN: %s", state["setup_token"])
+            logger.warning(
+                "[auth] vence en %s minutos y sirve una sola vez.",
+                auth_db.SETUP_TOKEN_TTL_MINUTES,
+            )
+            logger.warning("[auth] %s", "=" * 66)
+    yield
+
+
+# Orígenes locales por defecto: el panel y la API en localhost. Para exponer un
+# frontend propio, setear CORS_ALLOW_ORIGINS en el entorno (lista por comas).
+DEFAULT_CORS_ORIGINS: tuple[str, ...] = (
+    "http://localhost:8000",
+    "http://127.0.0.1:8000",
+)
+
+
+def cors_config() -> tuple[list[str], bool]:
+    """Orígenes y credenciales de CORS desde el entorno, con guarda de seguridad.
+
+    `CORS_ALLOW_ORIGINS` es una lista por comas (o `*`). `CORS_ALLOW_CREDENTIALS`
+    es booleano. La combinación `*` + credenciales es inválida en el navegador y
+    peligrosa si se aceptara, así que se desactivan las credenciales con aviso.
+    """
+    origins = list(config.env_list("CORS_ALLOW_ORIGINS", DEFAULT_CORS_ORIGINS))
+    credentials = config.env_bool("CORS_ALLOW_CREDENTIALS", False)
+    if "*" in origins and credentials:
+        logger.warning(
+            "[cors] CORS_ALLOW_ORIGINS='*' con credenciales es inseguro y lo "
+            "rechaza el navegador: se desactivan las credenciales. Listá los "
+            "orígenes explícitos si necesitás credenciales."
+        )
+        credentials = False
+    return origins, credentials
+
 
 app = FastAPI(
     title="Dulse Data Lake API & MCP",
     version="1.0.0",
-    description="API REST y servidor MCP para consultar el DuckLake (capas bronze, silver, gold y Time Travel).",
+    # La documentación se sirve con guardas propias (ver más abajo): el esquema
+    # de la API no queda expuesto sin sesión del panel.
+    docs_url=None,
+    redoc_url=None,
+    openapi_url=None,
+    lifespan=lifespan,
+    description=(
+        "API REST y servidor MCP para consultar la data cargada desde SQL Server "
+        "en el DuckLake (esquema bronze, tablas mssql_*, con Time Travel). "
+        "El panel de acceso está en /auth/panel."
+    ),
 )
 
-# Habilitar CORS para integración con dashboards web / frontends
+# Auth envuelve TODO (rutas REST + sub-app MCP en /mcp). Se agrega antes que
+# CORS para que CORS quede por fuera y los 401 también lleven sus headers.
+app.add_middleware(auth.ApiAuthMiddleware, public_paths=auth.PUBLIC_PATHS)
+
+# CORS para integración con dashboards web / frontends. Los orígenes se
+# configuran por entorno (CORS_ALLOW_ORIGINS); el default es local y acotado,
+# nunca `*` con credenciales (ver cors_config).
+_cors_origins, _cors_credentials = cors_config()
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
+    allow_origins=_cors_origins,
+    allow_credentials=_cors_credentials,
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -30,12 +117,49 @@ app.add_middleware(
 # Montar servidor FastMCP con transporte SSE bajo /mcp
 app.mount("/mcp", mcp.http_app(transport="sse"))
 
+# Panel de acceso: HTML server-side (Jinja2) + fragmentos HTMX.
+app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
+app.include_router(auth_panel.router)
+
+
+@app.exception_handler(auth_panel.SessionRequired)
+def _needs_login(request: Request, exc: auth_panel.SessionRequired) -> RedirectResponse:
+    return RedirectResponse(auth_panel.ENTRY_PATH, status_code=status.HTTP_303_SEE_OTHER)
+
+
+@app.exception_handler(auth_panel.PasswordChangeRequired)
+def _needs_password_change(request: Request, exc: auth_panel.PasswordChangeRequired) -> RedirectResponse:
+    return RedirectResponse(auth_panel.PASSWORD_PATH, status_code=status.HTTP_303_SEE_OTHER)
+
+
+@app.exception_handler(PermissionError)
+def _forbidden(request: Request, exc: PermissionError) -> PlainTextResponse:
+    return PlainTextResponse("Sólo el superAdmin puede hacer esto.", status_code=status.HTTP_403_FORBIDDEN)
+
+
+@app.get("/ui", include_in_schema=False)
+@app.get("/ui/", include_in_schema=False)
+def legacy_ui_redirect() -> RedirectResponse:
+    """La ruta vieja sobrevive como redirección permanente."""
+    return RedirectResponse("/auth/panel", status_code=status.HTTP_308_PERMANENT_REDIRECT)
+
+
+class TokenRequest(BaseModel):
+    username: str = Field(..., min_length=1, description="Usuario definido en AUTH_USERS.")
+    password: str = Field(..., min_length=1, description="Password (plano o PBKDF2 en AUTH_USERS).")
+
+
+class TokenResponse(BaseModel):
+    access_token: str
+    token_type: str = "bearer"
+    expires_in: int = Field(..., description="Vigencia del token en segundos.")
+
 
 class QueryRequest(BaseModel):
     sql: str = Field(
         ...,
         description="Consulta SQL de solo lectura (SELECT, WITH, DESCRIBE, EXPLAIN).",
-        examples=["SELECT * FROM lake.gold.gold_monthly_revenue LIMIT 5"],
+        examples=["SELECT * FROM lake.bronze.mssql_bs_transaccion LIMIT 5"],
     )
     limit: int = Field(
         default=100,
@@ -59,6 +183,68 @@ def root():
     return RedirectResponse(url="/docs")
 
 
+def _docs_gate(request: Request, path: str) -> RedirectResponse | None:
+    """Sin sesión del panel no se ve la documentación: se manda a entrar."""
+    if auth_panel.session_user(request) is not None:
+        return None
+    return RedirectResponse(
+        f"{auth_panel.ENTRY_PATH}?next={path}", status_code=status.HTTP_303_SEE_OTHER
+    )
+
+
+@app.get("/openapi.json", include_in_schema=False)
+def openapi_schema(request: Request):
+    blocked = _docs_gate(request, "/openapi.json")
+    if blocked is not None:
+        return blocked
+    return JSONResponse(app.openapi())
+
+
+@app.get("/docs", include_in_schema=False)
+def swagger_ui(request: Request):
+    blocked = _docs_gate(request, "/docs")
+    if blocked is not None:
+        return blocked
+    return get_swagger_ui_html(openapi_url="/openapi.json", title="Dulse Data Lake · API")
+
+
+@app.get("/redoc", include_in_schema=False)
+def redoc_ui(request: Request):
+    blocked = _docs_gate(request, "/redoc")
+    if blocked is not None:
+        return blocked
+    return get_redoc_html(openapi_url="/openapi.json", title="Dulse Data Lake · API")
+
+
+@app.post("/auth/token", response_model=TokenResponse, tags=["Auth"])
+def issue_token(payload: TokenRequest):
+    """Emite un JWT (HS256) para un usuario de `AUTH_USERS`.
+
+    Alternativa humana a la API key: el token sirve igual para la API REST y
+    para el MCP por HTTP/SSE (`Authorization: Bearer <token>`).
+    """
+    locked = throttle.login_throttle.locked_for(payload.username)
+    if locked > 0:
+        retry = int(locked) + 1
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail=f"Demasiados intentos fallidos. Prob\u00e1 de nuevo en {retry} segundos.",
+            headers={"Retry-After": str(retry)},
+        )
+    try:
+        subject = auth.authenticate(payload.username, payload.password)
+    except auth.InvalidCredentials as exc:
+        throttle.login_throttle.register_failure(payload.username)
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail=exc.detail,
+            headers=exc.headers,
+        ) from exc
+    throttle.login_throttle.register_success(payload.username)
+    token, expires_in = auth.create_access_token(subject)
+    return TokenResponse(access_token=token, expires_in=expires_in)
+
+
 @app.get("/health", tags=["Health"])
 def health_check():
     """Verifica el estado del servicio y conectividad básica."""
@@ -70,11 +256,36 @@ def health_check():
     }
 
 
+def _custom_openapi():
+    """OpenAPI con los dos esquemas de seguridad (botón Authorize de Swagger)."""
+    if app.openapi_schema:
+        return app.openapi_schema
+    schema = get_openapi(
+        title=app.title,
+        version=app.version,
+        description=app.description,
+        routes=app.routes,
+    )
+    components = schema.setdefault("components", {})
+    components.setdefault("securitySchemes", {}).update(
+        {
+            "ApiKeyAuth": {"type": "apiKey", "in": "header", "name": "X-API-Key"},
+            "BearerAuth": {"type": "http", "scheme": "bearer", "bearerFormat": "JWT"},
+        }
+    )
+    schema["security"] = [{"ApiKeyAuth": []}, {"BearerAuth": []}]
+    app.openapi_schema = schema
+    return schema
+
+
+app.openapi = _custom_openapi
+
+
 @app.get("/api/v1/tables", tags=["Catálogo"])
 def list_lake_tables(
     schemas: str = Query(
-        default="bronze,silver,gold",
-        description="Esquemas separados por comas a incluir.",
+        default="bronze",
+        description="Esquemas separados por comas a incluir (el lago solo tiene bronze).",
     )
 ):
     """Lista las tablas del Data Lake con sus conteos de filas actuales."""
@@ -82,9 +293,12 @@ def list_lake_tables(
     try:
         return engine.list_tables(schemas=schema_list)
     except Exception as exc:
+        # El detalle va al log, no al cliente: la excepción puede traer rutas,
+        # DSNs o nombres internos.
+        logger.exception("Error consultando tablas del lago")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Error consultando tablas del lago: {exc}",
+            detail="Error interno consultando las tablas del lago.",
         ) from exc
 
 
@@ -104,47 +318,50 @@ def describe_lake_table(schema: str, table: str):
             detail=str(exc),
         ) from exc
     except Exception as exc:
+        logger.exception("Error describiendo tabla")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Error describiendo tabla: {exc}",
+            detail="Error interno describiendo la tabla.",
         ) from exc
 
 
-@app.get("/api/v1/kpis/{kpi_name}", tags=["KPIs Curados"])
-def get_curated_kpi(
-    kpi_name: str,
-    currency: str | None = Query(
-        default=None, description="Moneda para filtrar (ej. USD, UYU)."
-    ),
-    limit: int = Query(
-        default=20, ge=1, le=500, description="Límite de registros para tops."
-    ),
-):
-    """Obtiene métricas pre-calculadas de la capa Gold.
+@app.get("/api/v1/sqlserver/tables", tags=["SQL Server"])
+def list_sqlserver_tables():
+    """Inventario de las tablas cargadas desde SQL Server.
 
-    KPIs soportados:
-    - `monthly-revenue`: ingresos mensuales agregados.
-    - `customer-revenue`: clientes ordenados por recaudación total.
-    - `unit-performance`: desempeño y recaudación por unidad.
+    Devuelve por tabla: filas, cantidad de columnas, columnas y el último
+    `_dlt_load_id` (marca de la corrida de ingesta más reciente).
     """
-    clean_name = kpi_name.lower().replace("-", "_").strip()
     try:
-        if clean_name in ("monthly_revenue", "revenue"):
-            return engine.get_monthly_revenue(currency=currency)
-        if clean_name in ("customer_revenue", "customers"):
-            return engine.get_customer_revenue(limit=limit)
-        if clean_name in ("unit_performance", "units"):
-            return engine.get_unit_performance(limit=limit)
+        return engine.sqlserver_tables()
     except Exception as exc:
+        logger.exception("Error consultando las tablas de SQL Server")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Error consultando KPI '{kpi_name}': {exc}",
+            detail="Error interno consultando las tablas de SQL Server.",
         ) from exc
 
-    raise HTTPException(
-        status_code=status.HTTP_400_BAD_REQUEST,
-        detail=f"KPI '{kpi_name}' no soportado. Disponibles: 'monthly-revenue', 'customer-revenue', 'unit-performance'.",
-    )
+
+@app.get("/api/v1/sqlserver/tables/{table}/rows", tags=["SQL Server"])
+def preview_sqlserver_rows(
+    table: str,
+    limit: int = Query(default=20, ge=1, le=100, description="Filas por página (1-100)."),
+    offset: int = Query(default=0, ge=0, description="Desplazamiento para paginar."),
+    schema: str = Query(default="bronze", description="Esquema del lago."),
+):
+    """Devuelve una página de filas reales de una tabla cargada desde SQL Server."""
+    try:
+        return engine.preview_rows(schema=schema, table=table, limit=limit, offset=offset)
+    except KeyError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    except Exception as exc:
+        logger.exception("Error leyendo la tabla %r", table)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Error interno leyendo la tabla.",
+        ) from exc
 
 
 @app.get("/api/v1/snapshots", tags=["Time Travel"])
@@ -157,9 +374,10 @@ def list_snapshots(
     try:
         return engine.list_snapshots(limit=limit)
     except Exception as exc:
+        logger.exception("Error obteniendo snapshots de DuckLake")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Error obteniendo snapshots de DuckLake: {exc}",
+            detail="Error interno obteniendo snapshots.",
         ) from exc
 
 
@@ -179,7 +397,10 @@ def run_sql_query(payload: QueryRequest):
             detail=str(exc),
         ) from exc
     except Exception as exc:
+        # La validación (ValueError) devuelve un mensaje propio y seguro; sólo el
+        # error inesperado del motor se oculta y se loguea.
+        logger.exception("Error de ejecución SQL")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Error de ejecución SQL: {exc}",
+            detail="Error interno de ejecución SQL.",
         ) from exc

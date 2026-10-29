@@ -3,21 +3,20 @@
 #
 # Prepara desde cero (o actualiza sin romper estado existente):
 #   1. Archivo .env y carpeta ./mssql-backup/ (donde se dejan los archivos .bak)
-#   2. Infraestructura Docker (postgres-catalog, postgres-source, garage, prefect-server, mssql)
+#   2. Infraestructura Docker (postgres-catalog, garage, prefect-server, mssql)
 #   3. Bootstrap del catálogo DuckLake y bucket Garage S3
-#   4. Entornos virtuales Python 3.12 con uv (bronze, dbt, orchestration, api)
-#   5. Seed de datos iniciales en postgres-source (si está vacío o con --force-seed)
-#   6. Detección automática de .bak o .tar (.tar/.tar.gz/.tgz) en ./mssql-backup/:
+#   4. Entornos virtuales Python 3.12 con uv (bronze, orchestration, api)
+#   5. Detección automática de .bak o .tar (.tar/.tar.gz/.tgz) en ./mssql-backup/:
 #      - Si encuentra un .tar, descomprime el .bak automáticamente en ./mssql-backup/
 #      - Restaura el .bak más reciente en SQL Server (si es nuevo o con --force-restore)
-#      - Ingiere los datos de MSSQL y Postgres hacia el Data Lake (Bronze -> Silver -> Gold)
-#   7. Validación de API REST y Servidor MCP
+#      - Ingiere las tablas reales de SQL Server hacia Bronze (fast path bcp/MERGE)
+#   6. Validación de API REST y Servidor MCP (con auth)
+# La única fuente de datos es SQL Server: no hay seed sintético ni capas dbt.
 #
 # Uso:
 #   ./scripts/setup.sh                        # Setup completo + auto-detección de .bak/.tar en ./mssql-backup/
 #   ./scripts/setup.sh --bak /ruta/dump.tar   # Extrae el .tar (o copia el .bak) a ./mssql-backup/, restaura y carga datos
 #   ./scripts/setup.sh --force-restore        # Fuerza el restore e ingesta completa del .bak actual
-#   ./scripts/setup.sh --scale base           # Usa escala 'base' (10k clientes) para postgres-source
 #   ./scripts/setup.sh --start-api            # Al finalizar, deja corriendo la API/MCP en Docker (:8000)
 
 set -euo pipefail
@@ -25,25 +24,15 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
 
-SCALE="demo"
-FORCE_SEED=false
 FORCE_RESTORE=false
 START_API=false
 CUSTOM_BAK=""
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --scale)
-      SCALE="${2:-demo}"
-      shift 2
-      ;;
     --bak)
       CUSTOM_BAK="${2:?Error: --bak requiere la ruta al archivo .bak}"
       shift 2
-      ;;
-    --force-seed)
-      FORCE_SEED=true
-      shift
       ;;
     --force-restore)
       FORCE_RESTORE=true
@@ -54,7 +43,7 @@ while [[ $# -gt 0 ]]; do
       shift
       ;;
     -h|--help)
-      sed -n '2,22p' "$0"
+      sed -n '2,24p' "$0"
       exit 0
       ;;
     *)
@@ -86,6 +75,36 @@ if [[ ! -f .env ]]; then
 else
   echo "    .env ya existe (se conserva)"
 fi
+
+# Escribe NAME=VALUE en .env: reemplaza la línea si existe, si no la agrega.
+# Un .env previo a este cambio no tiene el bloque de auth: sin el append, el
+# script reportaría éxito dejando el servicio sin credenciales (fail-closed).
+set_env_value() {
+  local name="$1" value="$2"
+  if grep -qE "^${name}=" .env; then
+    sed -i "s|^${name}=.*|${name}=${value}|" .env
+  else
+    printf '\n%s=%s\n' "$name" "$value" >> .env
+  fi
+}
+
+# Los usuarios y las API keys viven en Postgres (`dulse_auth`), no en `.env`.
+# Lo único que se genera acá es el secreto que firma los JWT.
+ensure_auth_secrets() {
+  local jwt
+  jwt="$(grep -E '^AUTH_JWT_SECRET=' .env | cut -d= -f2- || true)"
+  if [[ -z "$jwt" ]]; then
+    jwt="$(openssl rand -hex 32)"
+    set_env_value AUTH_JWT_SECRET "$jwt"
+    echo "    AUTH_JWT_SECRET generado (32 bytes) para los JWT"
+  fi
+  # Verificación real: el servicio es fail-closed, así que no alcanza con imprimir.
+  grep -qxE '^AUTH_JWT_SECRET=.+' .env \
+    || { echo "ERROR: AUTH_JWT_SECRET no quedó persistido en .env" >&2; exit 1; }
+  echo "    Usuarios y API keys: se administran en el panel (http://localhost:${API_PORT:-8000}/ui)."
+  echo "      El primer arranque imprime un SETUP TOKEN en los logs del servicio."
+}
+ensure_auth_secrets
 
 EXTRACTED_BAK=""
 
@@ -146,73 +165,38 @@ set -a
 source .env
 set +a
 
-SOURCE_HOST="${SOURCE_HOST:-localhost}"
-SOURCE_USER="${SOURCE_USER:-source_user}"
-SOURCE_PASSWORD="${SOURCE_PASSWORD:-source_password}"
-SOURCE_DB="${SOURCE_DB:-source_db}"
-SOURCE_PORT="${SOURCE_PORT:-5434}"
 API_HOST="${API_HOST:-localhost}"
 API_PORT="${API_PORT:-8000}"
 
 # 2. Infraestructura Docker
 echo ""
-echo "==> [2/7] Levantando contenedores base con Docker Compose..."
-SERVICES=(postgres-catalog postgres-source garage prefect-server)
+echo "==> [2/6] Levantando contenedores base con Docker Compose..."
+SERVICES=(postgres-catalog garage prefect-server)
 if [[ -n "${MSSQL_SA_PASSWORD:-}" ]]; then
   SERVICES+=(mssql)
 fi
 docker compose up -d "${SERVICES[@]}"
 
-echo "    Esperando a que postgres-source esté listo..."
-for _ in $(seq 1 30); do
-  if docker compose exec -T postgres-source pg_isready -U "$SOURCE_USER" -d "$SOURCE_DB" >/dev/null 2>&1; then
-    break
-  fi
-  sleep 1
-done
-
 # 3. Bootstrap del Lakehouse (Catálogo + S3 + Prefect check)
 echo ""
-echo "==> [3/7] Ejecutando bootstrap del Lakehouse (Catálogo + Garage S3)..."
+echo "==> [3/6] Ejecutando bootstrap del Lakehouse (Catálogo + Garage S3)..."
 ./scripts/bootstrap.sh
 
 # 4. Entornos virtuales Python 3.12 con uv
 echo ""
-echo "==> [4/7] Configurando entornos virtuales Python 3.12 (uv)..."
-for mod in bronze dbt orchestration api; do
+echo "==> [4/6] Configurando entornos virtuales Python 3.12 (uv)..."
+for mod in bronze orchestration api; do
   echo "    -> Módulo: $mod"
   if [[ ! -f "$mod/.venv/bin/python" ]]; then
     uv venv "$mod/.venv" --python 3.12
   fi
   uv pip install -p "$mod/.venv/bin/python" -r "$mod/requirements.txt" --quiet
 done
-echo "    Entornos virtuales listos (bronze, dbt, orchestration, api)."
+echo "    Entornos virtuales listos (bronze, orchestration, api)."
 
-# 5. Seed de datos en postgres-source
+# 5. Pipeline: detección de .bak en ./mssql-backup/ + restore + ingesta MSSQL
 echo ""
-echo "==> [5/7] Verificando datos en postgres-source..."
-HAS_CUSTOMERS="$(docker compose exec -T postgres-source psql -U "$SOURCE_USER" -d "$SOURCE_DB" -tAc \
-  "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema='public' AND table_name='customers'" 2>/dev/null || echo "0")"
-
-ROW_COUNT="0"
-if [[ "$HAS_CUSTOMERS" == "1" ]]; then
-  ROW_COUNT="$(docker compose exec -T postgres-source psql -U "$SOURCE_USER" -d "$SOURCE_DB" -tAc \
-    "SELECT COUNT(*) FROM customers" 2>/dev/null || echo "0")"
-fi
-
-if [[ "$FORCE_SEED" == "true" || "$ROW_COUNT" == "0" ]]; then
-  echo "    Cargando datos sintéticos en postgres-source (escala: $SCALE)..."
-  bronze/.venv/bin/python source/generate.py --mode seed --scale "$SCALE" --out postgres
-else
-  echo "    postgres-source ya cuenta con datos ($ROW_COUNT clientes). Usa --force-seed para regenerar."
-fi
-
-# 6. Pipeline Medallón: Detección de .bak en ./mssql-backup/ + Ingesta + dbt + Export
-echo ""
-echo "==> [6/7] Ejecutando pipeline de datos (Postgres + MSSQL .bak -> DuckLake)..."
-echo "    -> Ingesta Bronze (Postgres -> DuckLake)..."
-bronze/.venv/bin/python bronze/pipeline.py
-
+echo "==> [5/6] Ejecutando pipeline de datos (MSSQL .bak -> DuckLake)..."
 # Si dejaron algún .tar (.tar/.tar.gz/.tgz) dentro de ./mssql-backup/, descomprimirlo primero
 if [[ -z "$EXTRACTED_BAK" ]]; then
   NEWEST_TAR="$(find ./mssql-backup -maxdepth 1 \( -iname '*.tar' -o -iname '*.tar.gz' -o -iname '*.tgz' -o -iname '*.tar.bz2' -o -iname '*.tar.xz' \) -printf '%T@ %p\n' 2>/dev/null | sort -nr | head -n1 | cut -d' ' -f2- || true)"
@@ -287,16 +271,9 @@ else
   echo "    -> Sin archivos .bak en ./mssql-backup/ (coloca un .bak allí para restaurar e ingerir MSSQL)."
 fi
 
-echo "    -> Transformaciones dbt (Silver + Gold)..."
-dbt/.venv/bin/dbt run --project-dir dbt --profiles-dir dbt
-dbt/.venv/bin/dbt test --project-dir dbt --profiles-dir dbt
-
-echo "    -> Exportando capa Gold a gold_serving (Postgres)..."
-bronze/.venv/bin/python scripts/export_gold.py
-
-# 7. Validación de API REST y Servidor MCP
+# 6. Validación de API REST y Servidor MCP
 echo ""
-echo "==> [7/7] Validando API REST (FastAPI) y Servidor MCP (FastMCP)..."
+echo "==> [6/6] Validando API REST (FastAPI) y Servidor MCP (FastMCP)..."
 api/.venv/bin/pytest -q api/test_api_mcp.py
 
 if [[ "$START_API" == "true" ]]; then
