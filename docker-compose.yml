@@ -9,7 +9,7 @@
 services:
   postgres-catalog:
     image: postgres:17.6-bookworm
-    container_name: kavos_lake-postgres-catalog
+    container_name: kavos-lake-postgres-catalog
     restart: unless-stopped
     environment:
       POSTGRES_DB: ${CATALOG_DB:-ducklake_catalog}
@@ -31,8 +31,8 @@ services:
     build:
       context: .
       dockerfile: docker/Dockerfile.garage
-    image: kavos_lake-garage:v2.4.1
-    container_name: kavos_lake-garage
+    image: kavos-lake-garage:v2.4.1
+    container_name: kavos-lake-garage
     restart: unless-stopped
     entrypoint: ["/garage"]
     command: ["server", "--single-node", "--default-bucket"]
@@ -57,7 +57,7 @@ services:
 
   prefect-server:
     image: prefecthq/prefect:3.6.22-python3.12
-    container_name: kavos_lake-prefect-server
+    container_name: kavos-lake-prefect-server
     restart: unless-stopped
     entrypoint: ["prefect"]
     command: ["server", "start", "--host", "${PREFECT_BIND_HOST:-0.0.0.0}", "--port", "${PREFECT_INTERNAL_PORT:-4200}"]
@@ -80,8 +80,8 @@ services:
     build:
       context: .
       dockerfile: docker/Dockerfile.mssql
-    image: kavos_lake-mssql:2022-CU27
-    container_name: kavos_lake-mssql
+    image: kavos-lake-mssql:2022-CU27
+    container_name: kavos-lake-mssql
     restart: unless-stopped
     environment:
       ACCEPT_EULA: "Y"
@@ -102,8 +102,8 @@ services:
     build:
       context: .
       dockerfile: docker/Dockerfile.pipeline
-    image: kavos_lake-lake-pipeline:latest
-    container_name: kavos_lake-lake-init
+    image: kavos-lake-pipeline:latest
+    container_name: kavos-lake-init
     restart: "no"
     command: ["bash", "scripts/container_init.sh"]
     environment:

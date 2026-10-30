@@ -1,4 +1,4 @@
-"""Autenticación de KavosLake Lake: API keys (servicio) + JWT HS256 (usuarios).
+"""Autenticación de KavosLake: API keys (servicio) + JWT HS256 (usuarios).
 
 Dos credenciales válidas, indistintas para cualquier ruta protegida:
 

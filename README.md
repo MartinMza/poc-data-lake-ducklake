@@ -21,7 +21,7 @@ feliz, los comandos que se usan de verdad y una tabla de fallas comunes.
 SQL Server (.bak) ──restore──▶ mssql ──bcp/MERGE (fast) o dlt──▶ bronze ──▶ API REST + MCP
                                                                │  DuckLake: catálogo en postgres-catalog + Parquet en Garage (S3)
                                                                ▼
-                                              orquestado por Prefect (flow kavos_lake-medallion)
+                                              orquestado por Prefect (flow kavos-lake-medallion)
                                               backup: pg_dump + espejo S3 · time travel: AT (VERSION => N)
 ```
 
@@ -31,7 +31,7 @@ SQL Server (.bak) ──restore──▶ mssql ──bcp/MERGE (fast) o dlt─�
 | Origen real | `.bak` de SQL Server restaurado (7 tablas del subset: `BSMoneda`, `BSProducto`, `BSOrganizacion`, `BSTransaccion`, `BSOperacion`, `DMart_Ventas`, `DMart_VentasProductoCliente`) | `mssql-backup/` (gitignored), `scripts/restore_mssql.sh` |
 | Ingesta bronze | `bronze/fast_mssql.py` (principal: bcp → staging → MERGE) y `bronze/pipeline_mssql.py` (fallback dlt) | `bronze/` |
 | Purga de data de ejemplo | deja solo las 7 tablas reales (dry-run por defecto) | `scripts/purge_sample_data.py` |
-| Orquestación | Flow `kavos_lake-medallion`: restore condicional → ingesta MSSQL | `orchestration/` |
+| Orquestación | Flow `kavos-lake-medallion`: restore condicional → ingesta MSSQL | `orchestration/` |
 | Servicio | API REST (FastAPI) + MCP (FastMCP) con auth obligatoria | `src/kavos_lake/` |
 | Operación | backup/restore del lago, time travel, conteos | `scripts/` |
 
@@ -41,7 +41,7 @@ Layout del código, puertos/adaptadores y regla de dependencia:
 Versiones fijadas: `postgres:17.6-bookworm`, `dxflrs/garage:v2.4.1`,
 `prefecthq/prefect:3.6.22-python3.12` (server) / `prefect==3.8.8` (cliente),
 `duckdb==1.5.6` (DuckLake 1.0), `dlt==1.31.0`,
-`kavos_lake-mssql:2022-CU27`.
+`kavos-lake-mssql:2022-CU27`.
 
 ## Setup
 

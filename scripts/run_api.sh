@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# run_api.sh — Inicia la API REST (FastAPI) y servidor MCP (FastMCP) de KavosLake Lakehouse.
+# run_api.sh — Inicia la API REST (FastAPI) y servidor MCP (FastMCP) de KavosLake.
 #
 # Uso:
 #   ./scripts/run_api.sh           # Modo host por defecto con recarga en vivo (puerto 8000)

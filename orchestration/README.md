@@ -1,6 +1,6 @@
 # Orquestación (Prefect)
 
-Flow único `kavos_lake-medallion` (`orchestration/flow.py`), lineal y de una sola
+Flow único `kavos-lake-medallion` (`orchestration/flow.py`), lineal y de una sola
 rama, porque la única fuente de datos es SQL Server:
 
 1. **`bak-watch-restore`** — restore condicional del `.bak`.

@@ -59,7 +59,7 @@ RESTORE_MARK_PATH = Path(os.getenv(
 # Espera entre las dos lecturas de size/mtime (anti-copia-parcial).
 BAK_SETTLE_SECONDS = int(os.getenv("ORCH_BAK_SETTLE_SECONDS", "5"))
 
-FLOW_NAME = "kavos_lake-medallion"
+FLOW_NAME = "kavos-lake-medallion"
 
 
 def _run(cmd: list[str], stage: str) -> str:
