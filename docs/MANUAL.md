@@ -112,7 +112,7 @@ ibas.
 | script, agente, dashboard | **API key** | header `X-API-Key: <key>` (se crea en `/auth/panel`) |
 | persona, Swagger, cliente MCP | **JWT** | `POST /auth/token` → `Authorization: Bearer <token>` |
 
-Las credenciales viven en Postgres (base `dulse_auth`), no en el `.env`. Para
+Las credenciales viven en Postgres (base `kavos_lake_auth`), no en el `.env`. Para
 conseguir una API key: entrá al panel en **http://localhost:8000/auth/panel** y
 creala ahí; se muestra una sola vez.
 
@@ -143,7 +143,7 @@ Dos defensas que conviene conocer:
 | Transporte | Cómo se autentica | Cuándo usarlo |
 |---|---|---|
 | HTTP/SSE en `http://localhost:8000/mcp/sse` | header `X-API-Key` o Bearer | agentes y clientes remotos |
-| stdio: `python -m dulse.adapters.inbound.mcp.server` | **sin auth** (corre como tu proceso) | Claude Desktop y similares en tu máquina |
+| stdio: `python -m kavos_lake.adapters.inbound.mcp.server` | **sin auth** (corre como tu proceso) | Claude Desktop y similares en tu máquina |
 
 Herramientas: `sqlserver_tables`, `list_tables`, `describe_table`,
 `preview_rows`, `run_query`, `list_snapshots`.
@@ -262,7 +262,7 @@ Tres cosas que te van a ahorrar tiempo:
 - No uses `docker compose up -d` a secas: levanta `lake-init` y dispara una
   reingesta.
 - El rango de commits de la feature de auth está revisado y aprobado; si tocás
-  `src/dulse/infrastructure/security.py`, esperá otra revisión.
+  `src/kavos_lake/infrastructure/security.py`, esperá otra revisión.
 
 ---
 
@@ -273,7 +273,7 @@ La ruta vieja `/ui` redirige sola.
 
 Es HTML armado en el servidor (Jinja2); las tablas se refrescan con HTMX sin
 recargar la página. No hay build, ni npm, ni CDN: `htmx.min.js` vive en
-`src/dulse/adapters/inbound/http/static/`.
+`src/kavos_lake/adapters/inbound/http/static/`.
 
 ### Las vistas
 
@@ -341,7 +341,7 @@ pantalla redirige al login.
 
 ```bash
 HASH=$(.venv/bin/python scripts/hash_password.py --password-stdin <<< 'nuevo-password')
-docker compose exec -T postgres-catalog psql -U ducklake -d dulse_auth \
+docker compose exec -T postgres-catalog psql -U ducklake -d kavos_lake_auth \
   -c "UPDATE users SET password_hash='$HASH' WHERE username='admin';"
 ```
 
@@ -349,7 +349,7 @@ docker compose exec -T postgres-catalog psql -U ducklake -d dulse_auth \
 
 ```bash
 docker compose exec -T postgres-catalog psql -U ducklake -d postgres \
-  -c "DROP DATABASE IF EXISTS dulse_auth"
+  -c "DROP DATABASE IF EXISTS kavos_lake_auth"
 docker compose restart lake-api      # recrea la base e imprime un SETUP TOKEN nuevo
 ```
 
@@ -365,3 +365,28 @@ Ojo: eso borra usuarios y keys. Los datos del lake no se tocan.
 - [ ] `/api/v1/sqlserver/tables` responde 401 sin credencial y 200 con key.
 - [ ] `.venv/bin/python -m pytest -q` da 191 passed.
 - [ ] `docker compose ps` no muestra servicios huérfanos.
+
+---
+
+## Migración de nombre: Dulse → KavosLake
+
+La base de credenciales cambió de `dulse_auth` a `kavos_lake_auth`. Los datos no
+se pierden: se renombra la base, no se copia.
+
+```bash
+./scripts/migrate_rename_kavoslake.sh          # dry-run: muestra el plan
+./scripts/migrate_rename_kavoslake.sh --apply  # ejecuta el ALTER DATABASE
+```
+
+Después:
+
+1. `.env`: `AUTH_DB_NAME=kavos_lake_auth` (si no está definido, ése ya es el default).
+2. Reiniciar la API para que tome el issuer y la cookie nuevos.
+3. Re-loguearse en el panel: cambió el nombre de la cookie y los JWT viejos dejan
+   de validar porque cambió el `iss` (los nuevos salen con `kavos-lake-api`).
+4. Las API keys emitidas antes **siguen funcionando**: se validan por hash; el
+   prefijo visible (`kavos_lake_`) es sólo cosmético.
+
+Si además renombrás la carpeta del repo, `docker compose` deriva un nombre de
+proyecto nuevo y crea volúmenes vacíos: usá `-p dulse` (o
+`COMPOSE_PROJECT_NAME=dulse`) para seguir montando los volúmenes existentes.

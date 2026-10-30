@@ -1,4 +1,4 @@
-# Dulse Lake — API REST (FastAPI) & Servidor MCP (FastMCP)
+# KavosLake — API REST (FastAPI) & Servidor MCP (FastMCP)
 
 Capa de servicio para consultar el Data Lake DuckLake, que hoy contiene
 **únicamente la data cargada desde SQL Server** (esquema `bronze`: 7 tablas
@@ -31,7 +31,7 @@ Manual en el host:
 ```bash
 uv venv .venv --python 3.12
 uv pip install -p .venv/bin/python -r requirements.txt
-.venv/bin/uvicorn dulse.adapters.inbound.http.api:app --host 0.0.0.0 --port 8000 --reload
+.venv/bin/uvicorn kavos_lake.adapters.inbound.http.api:app --host 0.0.0.0 --port 8000 --reload
 ```
 
 ---
@@ -54,7 +54,7 @@ Configuración (`.env` o entorno):
 | `AUTH_USERS` | *(vacío)* | `usuario:secreto,usuario2:secreto`; secreto plano o PBKDF2 |
 | `AUTH_JWT_SECRET` | *(vacío)* | secreto HS256 (32+ bytes: `openssl rand -hex 32`) |
 | `AUTH_JWT_TTL_MINUTES` | `60` | vigencia del access token |
-| `AUTH_JWT_ISSUER` | `dulse-lake-api` | claim `iss` exigido |
+| `AUTH_JWT_ISSUER` | `kavos-lake-api` | claim `iss` exigido |
 | `CORS_ALLOW_ORIGINS` | local (`http://localhost:8000`, `http://127.0.0.1:8000`) | orígenes del navegador, lista por comas o `*` |
 | `CORS_ALLOW_CREDENTIALS` | `false` | con `*` en orígenes se ignora y queda `false` |
 | `SESSION_COOKIE_SECURE` | `false` | flag `Secure` de la cookie del panel (poné `true` con TLS) |
@@ -82,7 +82,7 @@ Reglas:
   `csrf` o header `X-CSRF-Token` que manda HTMX); sin él responden `403`. Los
   formularios pre-autenticación (login, setup, activación) no tienen sesión y
   quedan apoyados en `SameSite=Lax`.
-- El transporte MCP por **stdio** (`python -m dulse.adapters.inbound.mcp.server`) corre como
+- El transporte MCP por **stdio** (`python -m kavos_lake.adapters.inbound.mcp.server`) corre como
   proceso local del operador y no pasa por esta autenticación.
 
 ### API key
@@ -167,11 +167,11 @@ Recursos: `lake://catalog` (inventario del lago) y `lake://sqlserver/tables`
 ```json
 {
   "mcpServers": {
-    "dulse-datalake": {
-      "command": "/home/mmediza/orca/workspaces/POC-Data-Lake/dulse/.venv/bin/python",
-      "args": ["-m", "dulse.adapters.inbound.mcp.server"],
+    "kavos-lake": {
+      "command": "/home/mmediza/orca/workspaces/POC-Data-Lake/kavos_lake/.venv/bin/python",
+      "args": ["-m", "kavos_lake.adapters.inbound.mcp.server"],
       "env": {
-        "PYTHONPATH": "/home/mmediza/orca/workspaces/POC-Data-Lake/dulse/src",
+        "PYTHONPATH": "/home/mmediza/orca/workspaces/POC-Data-Lake/kavos_lake/src",
         "CATALOG_HOST": "localhost",
         "CATALOG_PORT": "5433",
         "GARAGE_S3_ENDPOINT": "http://localhost:3900"

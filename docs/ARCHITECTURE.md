@@ -1,4 +1,4 @@
-# Arquitectura de Dulse
+# Arquitectura de KavosLake
 
 Organización **hexagonal (puertos y adaptadores)** con la **regla de dependencia**
 de clean architecture como invariante verificable.
@@ -6,7 +6,7 @@ de clean architecture como invariante verificable.
 ## Capas
 
 ```
-src/dulse/
+src/kavos_lake/
 ├── domain/         reglas puras: política SQL del sandbox (sin I/O, sin frameworks)
 ├── ports/          contratos (Protocol): motor de consultas e identidad
 ├── adapters/

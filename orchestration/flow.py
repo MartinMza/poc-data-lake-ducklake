@@ -59,7 +59,7 @@ RESTORE_MARK_PATH = Path(os.getenv(
 # Espera entre las dos lecturas de size/mtime (anti-copia-parcial).
 BAK_SETTLE_SECONDS = int(os.getenv("ORCH_BAK_SETTLE_SECONDS", "5"))
 
-FLOW_NAME = "dulse-medallion"
+FLOW_NAME = "kavos_lake-medallion"
 
 
 def _run(cmd: list[str], stage: str) -> str:
@@ -230,7 +230,7 @@ def mssql_ingest(full_refresh: bool = False) -> str:
 
 
 @flow(name=FLOW_NAME, log_prints=True)
-def dulse_medallion_flow(full_refresh: bool = False) -> dict[str, str]:
+def kavos_lake_medallion_flow(full_refresh: bool = False) -> dict[str, str]:
     """Día completo: restore condicional del .bak y luego la ingesta bronze
     desde SQL Server (fail-stop: si el restore falla, no se ingesta)."""
     restore_log = bak_watch_restore()
@@ -244,7 +244,7 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--full-refresh", action="store_true",
                     help="pasa --full (fast path) o --full-refresh (dlt) a la ingesta")
     args = ap.parse_args(argv)
-    state = dulse_medallion_flow(full_refresh=args.full_refresh, return_state=True)
+    state = kavos_lake_medallion_flow(full_refresh=args.full_refresh, return_state=True)
     print(f"flow {FLOW_NAME}: {state.name}")
     return 0 if state.is_completed() else 1
 
