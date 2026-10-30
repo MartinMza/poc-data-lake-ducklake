@@ -28,5 +28,5 @@ index = "index.html"
 [admin]
 api_bind_addr = "[::]:3903"
 # Tokens administrativos solo-PoC-local.
-admin_token = "dulse-local-admin-token-poc-only-0001"
-metrics_token = "dulse-local-metrics-token-poc-only-0001"
+admin_token = "kavos_lake-local-admin-token-poc-only-0001"
+metrics_token = "kavos_lake-local-metrics-token-poc-only-0001"

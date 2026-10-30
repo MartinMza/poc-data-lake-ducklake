@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# setup.sh — Setup inicial completo e idempotente del Data Lake Dulse.
+# setup.sh — Setup inicial completo e idempotente del Data Lake KavosLake.
 #
 # Prepara desde cero (o actualiza sin romper estado existente):
 #   1. Archivo .env y carpeta ./mssql-backup/ (donde se dejan los archivos .bak)
@@ -54,7 +54,7 @@ while [[ $# -gt 0 ]]; do
 done
 
 echo "================================================================="
-echo "  Dulse Data Lake — Setup Inicial Completo"
+echo "  KavosLake Data Platform — Setup Inicial Completo"
 echo "================================================================="
 
 # 0. Verificar herramientas requeridas
@@ -88,7 +88,7 @@ set_env_value() {
   fi
 }
 
-# Los usuarios y las API keys viven en Postgres (`dulse_auth`), no en `.env`.
+# Los usuarios y las API keys viven en Postgres (`kavos_lake_auth`), no en `.env`.
 # Lo único que se genera acá es el secreto que firma los JWT.
 ensure_auth_secrets() {
   local jwt

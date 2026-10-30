@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# run_api.sh — Inicia la API REST (FastAPI) y servidor MCP (FastMCP) de Dulse Lakehouse.
+# run_api.sh — Inicia la API REST (FastAPI) y servidor MCP (FastMCP) de KavosLake Lakehouse.
 #
 # Uso:
 #   ./scripts/run_api.sh           # Modo host por defecto con recarga en vivo (puerto 8000)
@@ -24,7 +24,7 @@ API_PORT="${API_PORT:-8000}"
 CATALOG_USER="${CATALOG_USER:-ducklake}"
 CATALOG_DB="${CATALOG_DB:-ducklake_catalog}"
 
-# Auth: los usuarios y las API keys viven en Postgres (`dulse_auth`). Lo único
+# Auth: los usuarios y las API keys viven en Postgres (`kavos_lake_auth`). Lo único
 # que este script necesita del entorno es el secreto que firma los JWT.
 if [[ -z "${AUTH_JWT_SECRET:-}" ]]; then
   echo "ERROR: falta AUTH_JWT_SECRET (openssl rand -hex 32) en .env." >&2
@@ -75,7 +75,7 @@ if [[ "$MODE" == "docker" ]]; then
 
   echo ""
   echo "================================================================="
-  echo "  Dulse Lake API & MCP corriendo en Docker (puerto ${API_PORT})"
+  echo "  KavosLake API & MCP corriendo en Docker (puerto ${API_PORT})"
   echo "================================================================="
   echo "  - Documentación Swagger UI: http://${API_HOST}:${API_PORT}/docs"
   echo "  - FastMCP SSE (Agentes AI): http://${API_HOST}:${API_PORT}/mcp/sse"
@@ -97,13 +97,13 @@ fi
 echo "==> [3/3] Iniciando servidor Uvicorn en http://${API_BIND_HOST}:${API_PORT}..."
 echo ""
 echo "================================================================="
-echo "  Dulse Lake API & MCP corriendo en Host (puerto ${API_PORT})"
+echo "  KavosLake API & MCP corriendo en Host (puerto ${API_PORT})"
 echo "================================================================="
 echo "  - Documentación Swagger UI: http://${API_HOST}:${API_PORT}/docs"
 echo "  - FastMCP SSE (Agentes AI): http://${API_HOST}:${API_PORT}/mcp/sse"
-echo "  - FastMCP Stdio (Claude):   .venv/bin/python -m dulse.adapters.inbound.mcp.server (sin auth: proceso local)"
+echo "  - FastMCP Stdio (Claude):   .venv/bin/python -m kavos_lake.adapters.inbound.mcp.server (sin auth: proceso local)"
 echo "  - Auth (REST y MCP):       ${AUTH_HINT}"
 echo "================================================================="
 echo ""
 
-exec .venv/bin/uvicorn dulse.adapters.inbound.http.api:app --host "$API_BIND_HOST" --port "$API_PORT" --reload
+exec .venv/bin/uvicorn kavos_lake.adapters.inbound.http.api:app --host "$API_BIND_HOST" --port "$API_PORT" --reload

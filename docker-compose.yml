@@ -9,7 +9,7 @@
 services:
   postgres-catalog:
     image: postgres:17.6-bookworm
-    container_name: dulse-postgres-catalog
+    container_name: kavos_lake-postgres-catalog
     restart: unless-stopped
     environment:
       POSTGRES_DB: ${CATALOG_DB:-ducklake_catalog}
@@ -31,8 +31,8 @@ services:
     build:
       context: .
       dockerfile: docker/Dockerfile.garage
-    image: dulse-garage:v2.4.1
-    container_name: dulse-garage
+    image: kavos_lake-garage:v2.4.1
+    container_name: kavos_lake-garage
     restart: unless-stopped
     entrypoint: ["/garage"]
     command: ["server", "--single-node", "--default-bucket"]
@@ -57,7 +57,7 @@ services:
 
   prefect-server:
     image: prefecthq/prefect:3.6.22-python3.12
-    container_name: dulse-prefect-server
+    container_name: kavos_lake-prefect-server
     restart: unless-stopped
     entrypoint: ["prefect"]
     command: ["server", "start", "--host", "${PREFECT_BIND_HOST:-0.0.0.0}", "--port", "${PREFECT_INTERNAL_PORT:-4200}"]
@@ -80,8 +80,8 @@ services:
     build:
       context: .
       dockerfile: docker/Dockerfile.mssql
-    image: dulse-mssql:2022-CU27
-    container_name: dulse-mssql
+    image: kavos_lake-mssql:2022-CU27
+    container_name: kavos_lake-mssql
     restart: unless-stopped
     environment:
       ACCEPT_EULA: "Y"
@@ -102,8 +102,8 @@ services:
     build:
       context: .
       dockerfile: docker/Dockerfile.pipeline
-    image: dulse-lake-pipeline:latest
-    container_name: dulse-lake-init
+    image: kavos_lake-lake-pipeline:latest
+    container_name: kavos_lake-lake-init
     restart: "no"
     command: ["bash", "scripts/container_init.sh"]
     environment:
@@ -142,7 +142,7 @@ services:
     build:
       context: .
       dockerfile: docker/Dockerfile.api
-    container_name: dulse-lake-api
+    container_name: kavos-lake-api
     restart: unless-stopped
     ports:
       - "${API_PORT:-8000}:${API_INTERNAL_PORT:-8000}"
@@ -164,8 +164,8 @@ services:
       # Auth obligatoria (fail-closed): API keys para servicio/agentes y JWT para personas.
       AUTH_JWT_SECRET: ${AUTH_JWT_SECRET:-}
       AUTH_JWT_TTL_MINUTES: ${AUTH_JWT_TTL_MINUTES:-60}
-      # Credenciales: viven en Postgres, en la base `dulse_auth`.
-      AUTH_DB_NAME: ${AUTH_DB_NAME:-dulse_auth}
+      # Credenciales: viven en Postgres, en la base `kavos_lake_auth`.
+      AUTH_DB_NAME: ${AUTH_DB_NAME:-kavos_lake_auth}
       # Legado: el arranque las importa a la base una única vez y después no
       # se leen. Se pueden vaciar cuando el panel ya tiene los usuarios.
       AUTH_API_KEYS: ${AUTH_API_KEYS:-}

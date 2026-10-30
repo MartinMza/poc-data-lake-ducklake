@@ -1,4 +1,4 @@
-# Imagen unificada de ejecución para Dulse Data Lake (ingesta, dbt, Prefect, backup/restore y descompresión).
+# Imagen unificada de ejecución para KavosLake Data Platform (ingesta, dbt, Prefect, backup/restore y descompresión).
 FROM python:3.12-slim-bookworm
 
 WORKDIR /workspace

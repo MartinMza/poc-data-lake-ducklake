@@ -31,11 +31,11 @@ RUN python -c "import duckdb; con = duckdb.connect(); con.execute('INSTALL duckl
 
 COPY src /app/src
 
-# src/ en el path para que `dulse.*` sea importable.
+# src/ en el path para que `kavos_lake.*` sea importable.
 ENV PYTHONPATH=/app/src \
     PYTHONUNBUFFERED=1 \
     API_BIND_HOST=0.0.0.0 \
     API_INTERNAL_PORT=8000
 EXPOSE 8000
 
-CMD ["sh", "-c", "exec uvicorn dulse.adapters.inbound.http.api:app --host ${API_BIND_HOST:-0.0.0.0} --port ${API_INTERNAL_PORT:-8000}"]
+CMD ["sh", "-c", "exec uvicorn kavos_lake.adapters.inbound.http.api:app --host ${API_BIND_HOST:-0.0.0.0} --port ${API_INTERNAL_PORT:-8000}"]
