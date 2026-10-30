@@ -117,11 +117,11 @@ def main(argv: list[str] | None = None) -> int:
     if args.cmd == "upload":
         return cmd_upload(fs, args.local, args.url)
     if args.cmd == "purge":
-        confirm = os.getenv("DULSE_ALLOW_PURGE", "")
+        confirm = os.getenv("KAVOS_LAKE_ALLOW_PURGE", "")
         if confirm != "yes":
             print(
                 "rehusado: purge borra el bucket; exportar "
-                "DULSE_ALLOW_PURGE=yes para confirmar",
+                "KAVOS_LAKE_ALLOW_PURGE=yes para confirmar",
                 file=sys.stderr,
             )
             return 2

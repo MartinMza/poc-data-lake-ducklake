@@ -43,8 +43,8 @@ echo "==> [3/4] conteos del lago -> $DEST/counts.json"
 
 echo "==> [4/4] manifiesto"
 DUCKDB_VER="$("$BRONZE_PYTHON" -c "import duckdb; print(duckdb.__version__)" 2>/dev/null || echo "?")"
-PG_IMAGE="$(docker inspect dulse-postgres-catalog --format '{{.Config.Image}}' 2>/dev/null || echo "?")"
-GARAGE_IMAGE="$(docker inspect dulse-garage --format '{{.Config.Image}}' 2>/dev/null || echo "?")"
+PG_IMAGE="$(docker inspect kavos-lake-postgres-catalog --format '{{.Config.Image}}' 2>/dev/null || echo "?")"
+GARAGE_IMAGE="$(docker inspect kavos-lake-garage --format '{{.Config.Image}}' 2>/dev/null || echo "?")"
 cat > "$DEST/manifest.json" <<EOF
 {
   "timestamp_utc": "$(date -u +%FT%TZ)",

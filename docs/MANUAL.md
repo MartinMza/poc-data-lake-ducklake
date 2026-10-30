@@ -17,7 +17,7 @@ Tres comandos. Si los tres funcionan, el sistema está sano.
 ```bash
 docker compose ps --format '{{.Service}}\t{{.Status}}'     # 1. ¿está arriba?
 bronze/.venv/bin/python scripts/lake_counts.py             # 2. ¿hay datos?
-api/.venv/bin/python -m pytest -q api/                     # 3. ¿anda todo?
+.venv/bin/python -m pytest -q                     # 3. ¿anda todo?
 ```
 
 Qué esperar:
@@ -112,7 +112,7 @@ ibas.
 | script, agente, dashboard | **API key** | header `X-API-Key: <key>` (se crea en `/auth/panel`) |
 | persona, Swagger, cliente MCP | **JWT** | `POST /auth/token` → `Authorization: Bearer <token>` |
 
-Las credenciales viven en Postgres (base `dulse_auth`), no en el `.env`. Para
+Las credenciales viven en Postgres (base `kavos_lake_auth`), no en el `.env`. Para
 conseguir una API key: entrá al panel en **http://localhost:8000/auth/panel** y
 creala ahí; se muestra una sola vez.
 
@@ -143,7 +143,7 @@ Dos defensas que conviene conocer:
 | Transporte | Cómo se autentica | Cuándo usarlo |
 |---|---|---|
 | HTTP/SSE en `http://localhost:8000/mcp/sse` | header `X-API-Key` o Bearer | agentes y clientes remotos |
-| stdio: `python -m api.mcp_server` | **sin auth** (corre como tu proceso) | Claude Desktop y similares en tu máquina |
+| stdio: `python -m kavos_lake.adapters.inbound.mcp.server` | **sin auth** (corre como tu proceso) | Claude Desktop y similares en tu máquina |
 
 Herramientas: `sqlserver_tables`, `list_tables`, `describe_table`,
 `preview_rows`, `run_query`, `list_snapshots`.
@@ -166,9 +166,9 @@ Eso es por diseño, no un olvido.
 | restaurar el `.bak` | `./scripts/restore_mssql.sh <archivo>.bak FAF12_Kavos` | idempotente, usa `REPLACE` |
 | limpiar datos sintéticos viejos | `bronze/.venv/bin/python scripts/purge_sample_data.py` | dry-run por defecto; `--apply` ejecuta |
 | generar una API key | `openssl rand -hex 24` | 24 caracteres mínimo |
-| generar un usuario JWT | `api/.venv/bin/python scripts/hash_password.py` | `--password-stdin` para automatizar |
+| generar un usuario JWT | `.venv/bin/python scripts/hash_password.py` | `--password-stdin` para automatizar |
 | backup / restore del lake | `./scripts/backup.sh` / `./scripts/restore.sh <backup>` | el restore re-crea el catálogo |
-| correr los tests | `api/.venv/bin/python -m pytest -q api/` | necesitan el stack arriba con datos |
+| correr los tests | `.venv/bin/python -m pytest -q` | necesitan el stack arriba con datos |
 
 El resto (`bootstrap.sh`, `smoke_ducklake.py`, `s3_sync.py`,
 `timetravel_check.py`, `container_init.sh`) es infraestructura: se usa al
@@ -232,7 +232,7 @@ los tiene.
 | `README.md` | el quickstart general |
 | `docs/MANUAL.md` | este manual |
 | `docs/findings*.md` | decisiones, benchmarks y fricciones encontradas |
-| `api/README.md` | detalle de REST + MCP y configuración de clientes |
+| `docs/API.md` | detalle de REST + MCP y configuración de clientes |
 | `bronze/README.md` | cómo ingesta `fast_mssql.py` |
 | `orchestration/README.md` | el flow de Prefect |
 | `scripts/README.md` | procedimiento de infraestructura |
@@ -251,7 +251,7 @@ los tiene.
 Leé en este orden y pará cuando tengas lo que necesitás:
 
 1. Este manual, la sección "5 minutos".
-2. `api/README.md` si vas a tocar la API o el MCP.
+2. `docs/API.md` si vas a tocar la API o el MCP.
 3. `orchestration/README.md` si vas a tocar la ingesta.
 4. `odd/tasks/api-auth-mssql-only.md` para saber qué se decidió y por qué.
 
@@ -262,7 +262,7 @@ Tres cosas que te van a ahorrar tiempo:
 - No uses `docker compose up -d` a secas: levanta `lake-init` y dispara una
   reingesta.
 - El rango de commits de la feature de auth está revisado y aprobado; si tocás
-  `api/auth.py`, esperá otra revisión.
+  `src/kavos_lake/infrastructure/security.py`, esperá otra revisión.
 
 ---
 
@@ -273,7 +273,7 @@ La ruta vieja `/ui` redirige sola.
 
 Es HTML armado en el servidor (Jinja2); las tablas se refrescan con HTMX sin
 recargar la página. No hay build, ni npm, ni CDN: `htmx.min.js` vive en
-`api/static/`.
+`src/kavos_lake/adapters/inbound/http/static/`.
 
 ### Las vistas
 
@@ -340,8 +340,8 @@ pantalla redirige al login.
 ### Si te olvidás el password del superAdmin
 
 ```bash
-HASH=$(api/.venv/bin/python scripts/hash_password.py --password-stdin <<< 'nuevo-password')
-docker compose exec -T postgres-catalog psql -U ducklake -d dulse_auth \
+HASH=$(.venv/bin/python scripts/hash_password.py --password-stdin <<< 'nuevo-password')
+docker compose exec -T postgres-catalog psql -U ducklake -d kavos_lake_auth \
   -c "UPDATE users SET password_hash='$HASH' WHERE username='admin';"
 ```
 
@@ -349,7 +349,7 @@ docker compose exec -T postgres-catalog psql -U ducklake -d dulse_auth \
 
 ```bash
 docker compose exec -T postgres-catalog psql -U ducklake -d postgres \
-  -c "DROP DATABASE IF EXISTS dulse_auth"
+  -c "DROP DATABASE IF EXISTS kavos_lake_auth"
 docker compose restart lake-api      # recrea la base e imprime un SETUP TOKEN nuevo
 ```
 
@@ -363,5 +363,30 @@ Ojo: eso borra usuarios y keys. Los datos del lake no se tocan.
 - [ ] `lake_counts.py` muestra 7 tablas `mssql_*` y ~485.557 filas.
 - [ ] `/health` responde 200 sin credencial.
 - [ ] `/api/v1/sqlserver/tables` responde 401 sin credencial y 200 con key.
-- [ ] `pytest -q api/` da 39 passed.
+- [ ] `.venv/bin/python -m pytest -q` da 191 passed.
 - [ ] `docker compose ps` no muestra servicios huérfanos.
+
+---
+
+## Migración de nombre: Dulse → KavosLake
+
+La base de credenciales cambió de `dulse_auth` a `kavos_lake_auth`. Los datos no
+se pierden: se renombra la base, no se copia.
+
+```bash
+./scripts/migrate_rename_kavoslake.sh          # dry-run: muestra el plan
+./scripts/migrate_rename_kavoslake.sh --apply  # ejecuta el ALTER DATABASE
+```
+
+Después:
+
+1. `.env`: `AUTH_DB_NAME=kavos_lake_auth` (si no está definido, ése ya es el default).
+2. Reiniciar la API para que tome el issuer y la cookie nuevos.
+3. Re-loguearse en el panel: cambió el nombre de la cookie y los JWT viejos dejan
+   de validar porque cambió el `iss` (los nuevos salen con `kavos-lake-api`).
+4. Las API keys emitidas antes **siguen funcionando**: se validan por hash; el
+   prefijo visible (`kavos_lake_`) es sólo cosmético.
+
+Si además renombrás la carpeta del repo, `docker compose` deriva un nombre de
+proyecto nuevo y crea volúmenes vacíos: usá `-p dulse` (o
+`COMPOSE_PROJECT_NAME=dulse`) para seguir montando los volúmenes existentes.

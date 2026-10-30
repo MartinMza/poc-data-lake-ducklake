@@ -1,0 +1,74 @@
+{% set full = active_keys >= max_keys %}
+<section id="seccion-keys">
+  {% if created %}
+  <div class="alert ok">
+    Creada. <strong>Copiala ahora</strong>: no se vuelve a mostrar, en la base queda sólo el hash.
+    <div class="secret">
+      <code id="nueva-key">{{ created }}</code>
+      <button class="small" type="button"
+              onclick="navigator.clipboard.writeText(document.getElementById('nueva-key').textContent).then(()=>{this.textContent='Copiado';})">Copiar</button>
+    </div>
+  </div>
+  {% endif %}
+  {% if error %}<div class="alert error">{{ error }}</div>{% endif %}
+  {% if done %}<div class="alert ok">{{ done }}</div>{% endif %}
+
+  <div class="card">
+    <h2>Crear API key</h2>
+    <form hx-post="/auth/panel/keys" hx-target="#seccion-keys" hx-swap="outerHTML">
+      <input type="hidden" name="csrf" value="{{ user.csrf_token }}">
+      <div class="row">
+        <div class="field">
+          <label for="label">Para qué es</label>
+          <input id="label" name="label" type="text" placeholder="dashboards, etl nocturno…" maxlength="80">
+        </div>
+        <div class="field">
+          <label for="days">Vence en (días)</label>
+          <input id="days" name="expires_in_days" type="number" value="{{ default_days }}"
+                 min="{{ min_expiry_days }}" max="{{ max_expiry_days }}" required>
+        </div>
+      </div>
+      <button class="primary" type="submit" {% if full %}disabled{% endif %}>Crear key</button>
+      <span class="htmx-indicator">creando…</span>
+    </form>
+    <p class="hint">
+      {{ active_keys }} de {{ max_keys }} keys activas · vencimiento máximo {{ max_expiry_days }} días.
+      {% if full %}<strong>Para crear otra, revocá una.</strong>{% endif %}
+    </p>
+  </div>
+
+  <div class="card">
+    <h2>Mis API keys</h2>
+    {% if keys %}
+    <table>
+      <thead>
+        <tr><th>Prefijo</th><th>Para qué</th><th>Vence</th><th>Estado</th><th></th></tr>
+      </thead>
+      <tbody>
+      {% for k in keys %}
+        <tr>
+          <td class="mono">{{ k.visible_prefix }}…</td>
+          <td>{{ k.label or '—' }}</td>
+          <td>{{ k.expires_at.strftime('%d/%m/%Y') }}</td>
+          <td><span class="badge ok">activa</span></td>
+          <td class="actions">
+            <button class="small" hx-post="/auth/panel/keys/{{ k.id }}/rotar"
+                    hx-target="#seccion-keys" hx-swap="outerHTML"
+                    hx-confirm="¿Rotar? La key actual deja de funcionar en el acto.">Rotar</button>
+            <button class="small danger" hx-post="/auth/panel/keys/{{ k.id }}/revocar"
+                    hx-target="#seccion-keys" hx-swap="outerHTML"
+                    hx-confirm="¿Revocar? No se puede deshacer.">Revocar</button>
+          </td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+    {% else %}
+    <p class="empty">Todavía no tenés keys activas. Creá la primera arriba.</p>
+    {% endif %}
+  </div>
+
+  <p class="foot">
+    Uso: <code>curl -H "X-API-Key: kavos_lake_…" http://localhost:8000/api/v1/sqlserver/tables</code>
+  </p>
+</section>
