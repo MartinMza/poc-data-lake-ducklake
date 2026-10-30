@@ -27,7 +27,7 @@ from kavos_lake.domain.sql_policy import (
     validate_sql,
 )
 
-from kavos_lake.infrastructure.config import assert_safe_credentials, env as _env
+from kavos_lake.infrastructure import config
 
 _lock = threading.Lock()
 _con: duckdb.DuckDBPyConnection | None = None
@@ -39,22 +39,16 @@ def get_connection() -> duckdb.DuckDBPyConnection:
         if _con is not None:
             return _con
 
-        catalog_host = _env("CATALOG_HOST", "localhost")
-        catalog_password = _env("CATALOG_PASSWORD", "ducklake")
-        assert_safe_credentials(
-            host=catalog_host, secret=catalog_password, label="Catálogo DuckLake"
+        settings = config.get_settings()
+        config.assert_safe_credentials(
+            host=settings.catalog_host,
+            secret=settings.catalog_password.get_secret_value(),
+            label="Catálogo DuckLake",
         )
-        cat = (
-            f"dbname={_env('CATALOG_DB', 'ducklake_catalog')} "
-            f"host={catalog_host} "
-            f"port={_env('CATALOG_PORT', '5433')} "
-            f"user={_env('CATALOG_USER', 'ducklake')} "
-            f"password={catalog_password}"
-        )
-        garage_host = _env("GARAGE_HOST", "localhost")
-        garage_port = _env("GARAGE_S3_PORT", "3900")
-        endpoint = _env("GARAGE_S3_ENDPOINT", f"{garage_host}:{garage_port}")
-        endpoint_host = endpoint.removeprefix("http://").removeprefix("https://")
+        cat = settings.catalog_dsn
+        # Endpoint derivado de host + puerto (no hay variable combinada) y SSL
+        # derivado del esquema: http -> false, https -> true.
+        endpoint_host = settings.garage_s3_endpoint
 
         con = duckdb.connect()
         con.execute("INSTALL ducklake; LOAD ducklake;")
@@ -62,12 +56,13 @@ def get_connection() -> duckdb.DuckDBPyConnection:
         con.execute("INSTALL httpfs; LOAD httpfs;")
         con.execute(
             "CREATE OR REPLACE SECRET garage_s3 (TYPE S3, "
-            f"KEY_ID '{_env('GARAGE_S3_KEY_ID', 'GK0123456789abcdef0123456789abcdef')}', "
-            f"SECRET '{_env('GARAGE_S3_SECRET', '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef')}', "
-            f"ENDPOINT '{endpoint_host}', URL_STYLE 'path', USE_SSL false, "
-            f"REGION '{_env('GARAGE_S3_REGION', 'garage')}');"
+            f"KEY_ID '{settings.garage_s3_key_id}', "
+            f"SECRET '{settings.garage_s3_secret.get_secret_value()}', "
+            f"ENDPOINT '{endpoint_host}', URL_STYLE 'path', "
+            f"USE_SSL {'true' if settings.garage_use_ssl else 'false'}, "
+            f"REGION '{settings.garage_s3_region}');"
         )
-        data_path = _env("DUCKLAKE_DATA_PATH", "s3://lakehouse/data/")
+        data_path = settings.ducklake_data_path
         try:
             con.execute(
                 f"ATTACH 'ducklake:postgres:{cat}' AS lake (DATA_PATH '{data_path}')"

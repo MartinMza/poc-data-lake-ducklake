@@ -21,20 +21,21 @@ def _clear_env(monkeypatch):
     yield
 
 
-# --- env_list ----------------------------------------------------------------
+# --- Settings -----------------------------------------------------------------
 
 
-def test_env_list_parsea_lista_separada_por_comas(monkeypatch):
+def test_settings_parsea_origenes_separados_por_comas(monkeypatch):
     monkeypatch.setenv("CORS_ALLOW_ORIGINS", "https://a.example, https://b.example ,")
-    assert config.env_list("CORS_ALLOW_ORIGINS", ("x",)) == (
+    assert config.get_settings().cors_allow_origins == [
         "https://a.example",
         "https://b.example",
-    )
+    ]
 
 
-def test_env_list_usa_default_si_no_esta(monkeypatch):
-    assert config.env_list("CORS_ALLOW_ORIGINS", ("http://localhost:8000",)) == (
-        "http://localhost:8000",
+def test_origenes_usan_el_default_del_modelo_si_no_esta(monkeypatch):
+    monkeypatch.delenv("CORS_ALLOW_ORIGINS", raising=False)
+    assert config.get_settings().cors_allow_origins == list(
+        config.DEFAULT_CORS_ORIGINS
     )
 
 

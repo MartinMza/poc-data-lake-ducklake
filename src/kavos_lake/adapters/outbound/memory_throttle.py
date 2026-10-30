@@ -78,10 +78,11 @@ class LoginThrottle:
 
 
 def _build_default() -> LoginThrottle:
+    settings = config.get_settings()
     return LoginThrottle(
-        max_attempts=config.env_int("AUTH_LOGIN_MAX_ATTEMPTS", 5),
-        window_seconds=config.env_int("AUTH_LOGIN_WINDOW_SECONDS", 300),
-        lockout_seconds=config.env_int("AUTH_LOGIN_LOCKOUT_SECONDS", 300),
+        max_attempts=settings.auth_login_max_attempts,
+        window_seconds=settings.auth_login_window_seconds,
+        lockout_seconds=settings.auth_login_lockout_seconds,
     )
 
 

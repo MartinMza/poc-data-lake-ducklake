@@ -105,7 +105,7 @@ def _set_session(response: Response, token: str) -> None:
         # `Secure` para no mandar la cookie en claro. Default False: el PoC corre
         # local sobre http://localhost; en un despliegue con TLS se activa con
         # SESSION_COOKIE_SECURE=true.
-        secure=config.env_bool("SESSION_COOKIE_SECURE", False),
+        secure=config.get_settings().session_cookie_secure,
         samesite="lax",
         max_age=auth_db.SESSION_TTL_MINUTES * 60,
         path="/",
@@ -147,7 +147,7 @@ def _redirect(path: str, *, ok: str | None = None, code: int = status.HTTP_303_S
 
 
 def _base_url(request: Request) -> str:
-    configured = (os.environ.get("PANEL_PUBLIC_URL") or "").strip()
+    configured = config.get_settings().panel_public_url.strip()
     if configured:
         return configured.rstrip("/")
     return str(request.base_url).rstrip("/")

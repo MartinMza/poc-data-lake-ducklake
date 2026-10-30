@@ -1,31 +1,33 @@
-"""Configuración por entorno: campos tipados (pydantic-settings) + resolver genérico.
+"""Configuración de la aplicación: pydantic-settings, una sola fuente de verdad.
 
-Dos niveles, a propósito:
+Todas las variables de entorno se declaran como campos tipados de `Settings`:
+una variable que no está acá no es configuración de la aplicación.
 
-- `Settings`: los campos donde el tipo importa (flags de seguridad y límites).
-  Los valida pydantic (booleanos, enteros con rango, lista CSV) y falla cerrado
-  ante un valor inválido en vez de caer silenciosamente a un default inseguro.
-- `env()`: resolver genérico para el resto (hosts, rutas, secretos) usando el
-  mismo parser de `.env` que pydantic-settings (python-dotenv), así hay un solo
-  formato soportado.
+Dos reglas de diseño:
 
-`get_settings()` **no** cachea: los tests cambian el entorno con
-`monkeypatch.setenv` y el arranque valida fail-closed. El costo de instanciar
-`Settings` es despreciable frente a una request.
+1. **Granularidad.** Ninguna variable mezcla host y puerto, ni esquema, bucket y
+   prefijo. Los valores combinados (DSN del catálogo, endpoint de S3, ruta del
+   lago) son *derivados* en propiedades, no entradas editables.
+2. **Secretos como `SecretStr`.** Una contraseña o un secreto nunca aparece en
+   un `repr()`, en un log ni en un mensaje de error: hay que pedir
+   `get_secret_value()` explícitamente.
+
+`get_settings()` **no** cachea a propósito. Cachear una configuración tiene un
+modo de falla silencioso: alguien cambia el entorno (o el `.env`) y el proceso
+sigue usando valores viejos sin avisar. El costo de leerla es una construcción
+de `Settings` (26 campos + parseo del `.env`), despreciable frente a una
+request. Si alguna vez importa, cacheadla en el composition root y invalidarla
+explícitamente.
 """
 
 from __future__ import annotations
 
 import ipaddress
-import os
-from functools import lru_cache
-from typing import Annotated, Any
+from typing import Annotated, Any, Literal
 
-from dotenv import dotenv_values
-from pydantic import Field, field_validator
+from pydantic import Field, SecretStr, field_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
-# Orígenes locales por defecto: el panel y la API en localhost.
 DEFAULT_CORS_ORIGINS: tuple[str, ...] = (
     "http://localhost:8000",
     "http://127.0.0.1:8000",
@@ -38,6 +40,11 @@ DEFAULT_INSECURE_SECRETS = frozenset(
     {"", "ducklake", "password", "changeme", "secret", "admin"}
 )
 LOOPBACK_HOSTS = frozenset({"localhost", "127.0.0.1", "::1", "host.docker.internal"})
+
+_DEFAULT_GARAGE_KEY_ID = "GK0123456789abcdef0123456789abcdef"
+_DEFAULT_GARAGE_SECRET = (
+    "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+)
 
 
 def _split_csv(value: Any) -> list[str]:
@@ -52,7 +59,7 @@ def _split_csv(value: Any) -> list[str]:
 
 
 class Settings(BaseSettings):
-    """Configuración tipada de las perillas sensibles."""
+    """Configuración completa, tipada y validada."""
 
     model_config = SettingsConfigDict(
         env_file=".env",
@@ -61,95 +68,112 @@ class Settings(BaseSettings):
         case_sensitive=False,
     )
 
-    # NoDecode: el valor llega como CSV crudo y lo parte _parse_origins en vez
-    # de que pydantic-settings intente json.loads sobre "a,b".
+    # --- Catálogo DuckLake (Postgres) ---
+    catalog_host: str = "localhost"
+    catalog_port: int = Field(default=5433, ge=1, le=65535)
+    catalog_user: str = "ducklake"
+    catalog_password: SecretStr = SecretStr("ducklake")
+    catalog_db: str = "ducklake_catalog"
+
+    # --- Garage S3: esquema, host y puerto por separado (sin host:port) ---
+    garage_scheme: Literal["http", "https"] = "http"
+    garage_host: str = "localhost"
+    garage_s3_port: int = Field(default=3900, ge=1, le=65535)
+    garage_s3_key_id: str = _DEFAULT_GARAGE_KEY_ID
+    garage_s3_secret: SecretStr = SecretStr(_DEFAULT_GARAGE_SECRET)
+    garage_s3_region: str = "garage"
+
+    # --- Lago: bucket y prefijo por separado (la ruta S3 es derivada) ---
+    lakehouse_bucket: str = "lakehouse"
+    ducklake_data_prefix: str = "data"
+
+    # --- Base de credenciales: explícita, ya no hereda del catálogo ---
+    auth_db_host: str = "localhost"
+    auth_db_port: int = Field(default=5433, ge=1, le=65535)
+    auth_db_user: str = "ducklake"
+    auth_db_password: SecretStr = SecretStr("ducklake")
+    auth_db_name: str = "kavos_lake_auth"
+
+    # --- JWT y credenciales de usuarios ---
+    auth_jwt_secret: SecretStr = SecretStr("")
+    auth_jwt_ttl_minutes: int = Field(default=60, ge=1)
+    auth_jwt_issuer: str = "kavos-lake-api"
+    auth_api_keys: Annotated[list[str], NoDecode] = Field(default_factory=list)
+    # Legado: "usuario:secreto,usuario2:secreto". Sólo se usa para migrar a la
+    # base una vez; después puede quedar vacío.
+    auth_users: str = ""
+
+    # --- Rate-limiting de login ---
+    auth_login_max_attempts: int = Field(default=5, ge=1)
+    auth_login_window_seconds: int = Field(default=300, ge=1)
+    auth_login_lockout_seconds: int = Field(default=300, ge=1)
+
+    # --- CORS y panel ---
     cors_allow_origins: Annotated[list[str], NoDecode] = Field(
         default=list(DEFAULT_CORS_ORIGINS)
     )
     cors_allow_credentials: bool = False
     session_cookie_secure: bool = False
-    auth_login_max_attempts: int = Field(default=5, ge=1)
-    auth_login_window_seconds: int = Field(default=300, ge=1)
-    auth_login_lockout_seconds: int = Field(default=300, ge=1)
-    auth_jwt_ttl_minutes: int = Field(default=60, ge=1)
+    # URL pública del panel para armar los links de activación detrás de un
+    # proxy. Vacío = se usa el host de la request.
+    panel_public_url: str = ""
 
-    @field_validator("cors_allow_origins", mode="before")
+    # --- Validadores ---
+
+    @field_validator("cors_allow_origins", "auth_api_keys", mode="before")
     @classmethod
-    def _parse_origins(cls, value: Any) -> list[str]:
+    def _parse_csv(cls, value: Any) -> list[str]:
         return _split_csv(value)
+
+    @field_validator("ducklake_data_prefix")
+    @classmethod
+    def _strip_prefix(cls, value: str) -> str:
+        return value.strip().strip("/")
+
+    # --- Valores derivados (nunca entradas editables) ---
+
+    @property
+    def garage_s3_endpoint(self) -> str:
+        """`host:puerto` para el CREATE SECRET de DuckDB."""
+        return f"{self.garage_host}:{self.garage_s3_port}"
+
+    @property
+    def garage_use_ssl(self) -> bool:
+        return self.garage_scheme == "https"
+
+    @property
+    def ducklake_data_path(self) -> str:
+        """`s3://bucket/prefijo/`, compuesto desde bucket y prefijo."""
+        if not self.ducklake_data_prefix:
+            return f"s3://{self.lakehouse_bucket}/"
+        return f"s3://{self.lakehouse_bucket}/{self.ducklake_data_prefix}/"
+
+    @property
+    def catalog_dsn(self) -> str:
+        """DSN libpq del catálogo DuckLake (contiene el secreto: no loguear)."""
+        return (
+            f"dbname={self.catalog_db} "
+            f"host={self.catalog_host} "
+            f"port={self.catalog_port} "
+            f"user={self.catalog_user} "
+            f"password={self.catalog_password.get_secret_value()}"
+        )
+
+    @property
+    def auth_db_dsn(self) -> str:
+        """DSN libpq de la base de credenciales (contiene el secreto: no loguear)."""
+        return (
+            f"host={self.auth_db_host} "
+            f"port={self.auth_db_port} "
+            f"user={self.auth_db_user} "
+            f"password={self.auth_db_password.get_secret_value()} "
+            f"dbname={self.auth_db_name}"
+        )
 
 
 def get_settings() -> Settings:
-    """Configuración tipada, leída del entorno y de `.env` en cada llamada."""
+    """Configuración validada, leída del entorno y del `.env` en cada llamada."""
     return Settings()
-
-
-# Nombres de entorno -> campo tipado del modelo.
-_BOOL_FIELDS = {
-    "CORS_ALLOW_CREDENTIALS": "cors_allow_credentials",
-    "SESSION_COOKIE_SECURE": "session_cookie_secure",
-}
-_INT_FIELDS = {
-    "AUTH_LOGIN_MAX_ATTEMPTS": "auth_login_max_attempts",
-    "AUTH_LOGIN_WINDOW_SECONDS": "auth_login_window_seconds",
-    "AUTH_LOGIN_LOCKOUT_SECONDS": "auth_login_lockout_seconds",
-    "AUTH_JWT_TTL_MINUTES": "auth_jwt_ttl_minutes",
-}
-_LIST_FIELDS = {"CORS_ALLOW_ORIGINS": "cors_allow_origins"}
-
-
-@lru_cache(maxsize=1)
-def _dotenv() -> dict[str, str]:
-    """Lee `.env` del directorio de trabajo una sola vez (best-effort)."""
-    try:
-        values = dotenv_values(".env")
-    except OSError:
-        return {}
-    return {key: value for key, value in values.items() if value is not None}
-
-
-def env(name: str, default: str | None = None) -> str | None:
-    """Variable de entorno con fallback a `.env` y luego al default."""
-    value = os.getenv(name)
-    if value is not None:
-        return value
-    return _dotenv().get(name, default)
-
-
-def env_bool(name: str, default: bool = False) -> bool:
-    """Booleano: ausente cae al default del llamador; presente lo valida pydantic."""
-    raw = env(name)
-    if raw is None or not raw.strip():
-        return default
-    field = _BOOL_FIELDS.get(name)
-    if field is not None:
-        return bool(getattr(get_settings(), field))
-    return raw.strip().lower() in {"1", "true", "yes", "on"}
-
-
-def env_list(name: str, default: tuple[str, ...] = ()) -> tuple[str, ...]:
-    """Lista separada por comas; vacía o ausente cae al default del llamador."""
-    raw = env(name)
-    if raw is None or not raw.strip():
-        return tuple(default)
-    field = _LIST_FIELDS.get(name)
-    if field is not None:
-        return tuple(getattr(get_settings(), field))
-    return tuple(part.strip() for part in raw.split(",") if part.strip())
-
-
-def env_int(name: str, default: int) -> int:
-    """Entero: ausente cae al default del llamador; presente lo valida pydantic."""
-    raw = env(name)
-    if raw is None or not raw.strip():
-        return default
-    field = _INT_FIELDS.get(name)
-    if field is not None:
-        return int(getattr(get_settings(), field))
-    try:
-        return int(raw)
-    except ValueError:
-        return default
 
 
 def is_internal_host(host: str | None) -> bool:

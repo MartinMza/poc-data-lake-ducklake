@@ -114,23 +114,23 @@ class AuthDbError(Exception):
 
 
 def database_name() -> str:
-    return (os.environ.get("AUTH_DB_NAME") or "kavos_lake_auth").strip()
+    return config.get_settings().auth_db_name.strip()
 
 
 def dsn() -> str:
-    """DSN de la base de auth: mismos host/puerto/usuario que el catálogo."""
-    host = os.environ.get("AUTH_DB_HOST") or os.environ.get("CATALOG_HOST") or "localhost"
-    port = os.environ.get("AUTH_DB_PORT") or os.environ.get("CATALOG_PORT") or "5433"
-    user = os.environ.get("AUTH_DB_USER") or os.environ.get("CATALOG_USER") or "ducklake"
-    password = (
-        os.environ.get("AUTH_DB_PASSWORD")
-        or os.environ.get("CATALOG_PASSWORD")
-        or "ducklake"
-    )
+    """DSN de la base de credenciales.
+
+    Tiene sus propias variables (`AUTH_DB_*`): ya no hereda host, puerto,
+    usuario ni password del catálogo, así se puede apuntar a otro servidor sin
+    tocar el lago.
+    """
+    settings = config.get_settings()
     config.assert_safe_credentials(
-        host=host, secret=password, label="Base de credenciales"
+        host=settings.auth_db_host,
+        secret=settings.auth_db_password.get_secret_value(),
+        label="Base de credenciales",
     )
-    return f"host={host} port={port} user={user} password={password} dbname={database_name()}"
+    return settings.auth_db_dsn
 
 
 @contextmanager

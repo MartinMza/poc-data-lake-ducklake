@@ -75,8 +75,9 @@ def cors_config() -> tuple[list[str], bool]:
     es booleano. La combinación `*` + credenciales es inválida en el navegador y
     peligrosa si se aceptara, así que se desactivan las credenciales con aviso.
     """
-    origins = list(config.env_list("CORS_ALLOW_ORIGINS", DEFAULT_CORS_ORIGINS))
-    credentials = config.env_bool("CORS_ALLOW_CREDENTIALS", False)
+    settings = config.get_settings()
+    origins = list(settings.cors_allow_origins)
+    credentials = settings.cors_allow_credentials
     if "*" in origins and credentials:
         logger.warning(
             "[cors] CORS_ALLOW_ORIGINS='*' con credenciales es inseguro y lo "

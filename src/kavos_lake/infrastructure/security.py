@@ -33,7 +33,7 @@ from typing import Any, Iterable, Mapping
 
 import jwt
 
-from kavos_lake.infrastructure.config import env, env_int
+from kavos_lake.infrastructure.config import get_settings
 
 API_KEY_HEADER = "x-api-key"
 API_KEYS_ENV = "AUTH_API_KEYS"
@@ -103,13 +103,13 @@ def _split_list(raw: str | None) -> tuple[str, ...]:
 
 def api_keys() -> tuple[str, ...]:
     """API keys válidas configuradas en `AUTH_API_KEYS`."""
-    return _split_list(env(API_KEYS_ENV))
+    return tuple(get_settings().auth_api_keys)
 
 
 def users() -> dict[str, str]:
     """Usuarios configurados en `AUTH_USERS` como `{usuario: secreto}`."""
     credentials: dict[str, str] = {}
-    for entry in _split_list(env(USERS_ENV)):
+    for entry in _split_list(get_settings().auth_users):
         username, _, secret = entry.partition(":")
         if username.strip() and secret.strip():
             credentials[username.strip()] = secret.strip()
@@ -117,16 +117,15 @@ def users() -> dict[str, str]:
 
 
 def jwt_secret() -> str:
-    return (env(JWT_SECRET_ENV) or "").strip()
+    return get_settings().auth_jwt_secret.get_secret_value().strip()
 
 
 def jwt_issuer() -> str:
-    return (env(JWT_ISSUER_ENV) or DEFAULT_ISSUER).strip() or DEFAULT_ISSUER
+    return get_settings().auth_jwt_issuer.strip() or DEFAULT_ISSUER
 
 
 def jwt_ttl_minutes() -> int:
-    ttl = env_int(JWT_TTL_ENV, DEFAULT_TTL_MINUTES)
-    return ttl if ttl > 0 else DEFAULT_TTL_MINUTES
+    return get_settings().auth_jwt_ttl_minutes
 
 
 def assert_configured() -> None:
