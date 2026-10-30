@@ -118,7 +118,8 @@ services:
       GARAGE_S3_KEY_ID: ${GARAGE_S3_KEY_ID:-GK0123456789abcdef0123456789abcdef}
       GARAGE_S3_SECRET: ${GARAGE_S3_SECRET:-0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef}
       GARAGE_S3_REGION: ${GARAGE_S3_REGION:-garage}
-      DUCKLAKE_DATA_PATH: ${DUCKLAKE_DATA_PATH:-s3://lakehouse/data/}
+      LAKEHOUSE_BUCKET: ${LAKEHOUSE_BUCKET:-lakehouse}
+      DUCKLAKE_DATA_PREFIX: ${DUCKLAKE_DATA_PREFIX:-data}
       MSSQL_HOST: ${DOCKER_MSSQL_HOST:-mssql}
       MSSQL_PORT: "${MSSQL_INTERNAL_PORT:-1433}"
       MSSQL_USER: ${MSSQL_USER:-sa}
@@ -160,11 +161,18 @@ services:
       GARAGE_S3_KEY_ID: ${GARAGE_S3_KEY_ID:-GK0123456789abcdef0123456789abcdef}
       GARAGE_S3_SECRET: ${GARAGE_S3_SECRET:-0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef}
       GARAGE_S3_REGION: ${GARAGE_S3_REGION:-garage}
-      DUCKLAKE_DATA_PATH: ${DUCKLAKE_DATA_PATH:-s3://lakehouse/data/}
+      LAKEHOUSE_BUCKET: ${LAKEHOUSE_BUCKET:-lakehouse}
+      DUCKLAKE_DATA_PREFIX: ${DUCKLAKE_DATA_PREFIX:-data}
       # Auth obligatoria (fail-closed): API keys para servicio/agentes y JWT para personas.
       AUTH_JWT_SECRET: ${AUTH_JWT_SECRET:-}
       AUTH_JWT_TTL_MINUTES: ${AUTH_JWT_TTL_MINUTES:-60}
-      # Credenciales: viven en Postgres, en la base `kavos_lake_auth`.
+      # Credenciales: base propia, ya no hereda host/puerto/usuario/password del
+      # catálogo. Dentro de la red de compose el host es el servicio y el puerto
+      # el interno.
+      AUTH_DB_HOST: ${DOCKER_AUTH_DB_HOST:-postgres-catalog}
+      AUTH_DB_PORT: "${AUTH_DB_INTERNAL_PORT:-5432}"
+      AUTH_DB_USER: ${AUTH_DB_USER:-ducklake}
+      AUTH_DB_PASSWORD: ${AUTH_DB_PASSWORD:-ducklake}
       AUTH_DB_NAME: ${AUTH_DB_NAME:-kavos_lake_auth}
       # Legado: el arranque las importa a la base una única vez y después no
       # se leen. Se pueden vaciar cuando el panel ya tiene los usuarios.

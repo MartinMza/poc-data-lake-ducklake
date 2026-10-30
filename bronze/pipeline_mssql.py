@@ -181,7 +181,9 @@ def build_urls() -> tuple[str, str, str, dict]:
         f"&TrustServerCertificate=yes"
     )
 
-    data_path = _env("DUCKLAKE_DATA_PATH", "s3://lakehouse/data/")
+    bucket = _env("LAKEHOUSE_BUCKET", "lakehouse")
+    prefix = _env("DUCKLAKE_DATA_PREFIX", "data").strip("/")
+    data_path = f"s3://{bucket}/{prefix}/" if prefix else f"s3://{bucket}/"
     if not data_path.endswith("/"):
         data_path += "/"
 

@@ -33,7 +33,9 @@ S3_HOST = os.getenv("GARAGE_HOST", "localhost")
 S3_PORT = os.getenv("GARAGE_S3_PORT", "3900")
 S3_ENDPOINT = os.getenv("GARAGE_S3_ENDPOINT", f"{S3_HOST}:{S3_PORT}")
 S3_REGION = os.getenv("GARAGE_S3_REGION", "garage")
-DATA_PATH = os.getenv("DUCKLAKE_DATA_PATH", "s3://lakehouse/data/")
+_BUCKET = os.getenv("LAKEHOUSE_BUCKET", "lakehouse")
+_PREFIX = os.getenv("DUCKLAKE_DATA_PREFIX", "data").strip("/")
+DATA_PATH = f"s3://{_BUCKET}/{_PREFIX}/" if _PREFIX else f"s3://{_BUCKET}/"
 
 TABLE = "infra_smoke_test"
 EXPECTED = [(1, "hola"), (2, "ducklake")]
