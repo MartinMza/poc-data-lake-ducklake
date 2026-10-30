@@ -3,7 +3,7 @@
 #
 # Uso:
 #   ./scripts/run_api.sh           # Modo host por defecto con recarga en vivo (puerto 8000)
-#   ./scripts/run_api.sh --host    # Modo host explícito (usa api/.venv)
+#   ./scripts/run_api.sh --host    # Modo host explícito (usa .venv)
 #   ./scripts/run_api.sh --docker  # Modo contenedor Docker (docker compose up -d lake-api)
 
 set -euo pipefail
@@ -87,11 +87,11 @@ if [[ "$MODE" == "docker" ]]; then
 fi
 
 # Modo Host
-echo "==> [2/3] Verificando entorno virtual de api (api/.venv)..."
-if [[ ! -f "api/.venv/bin/python" ]]; then
+echo "==> [2/3] Verificando entorno virtual de la raíz (.venv)..."
+if [[ ! -f ".venv/bin/python" ]]; then
   echo "    Creando entorno virtual con uv..."
-  uv venv api/.venv --python 3.12
-  uv pip install -p api/.venv/bin/python -r api/requirements.txt
+  uv venv .venv --python 3.12
+  uv pip install -p .venv/bin/python -r requirements.txt
 fi
 
 echo "==> [3/3] Iniciando servidor Uvicorn en http://${API_BIND_HOST}:${API_PORT}..."
@@ -101,9 +101,9 @@ echo "  Dulse Lake API & MCP corriendo en Host (puerto ${API_PORT})"
 echo "================================================================="
 echo "  - Documentación Swagger UI: http://${API_HOST}:${API_PORT}/docs"
 echo "  - FastMCP SSE (Agentes AI): http://${API_HOST}:${API_PORT}/mcp/sse"
-echo "  - FastMCP Stdio (Claude):   api/.venv/bin/python -m api.mcp_server (sin auth: proceso local)"
+echo "  - FastMCP Stdio (Claude):   .venv/bin/python -m dulse.adapters.inbound.mcp.server (sin auth: proceso local)"
 echo "  - Auth (REST y MCP):       ${AUTH_HINT}"
 echo "================================================================="
 echo ""
 
-exec api/.venv/bin/uvicorn api.main:app --host "$API_BIND_HOST" --port "$API_PORT" --reload
+exec .venv/bin/uvicorn dulse.adapters.inbound.http.api:app --host "$API_BIND_HOST" --port "$API_PORT" --reload

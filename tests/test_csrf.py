@@ -12,8 +12,8 @@ import re
 import pytest
 from fastapi.testclient import TestClient
 
-from api.main import app
-from api.test_support import PASSWORD, SUPERADMIN_PASSWORD, SUPERADMIN_USERNAME, USERNAME
+from dulse.adapters.inbound.http.api import app
+from tests.support import PASSWORD, SUPERADMIN_PASSWORD, SUPERADMIN_USERNAME, USERNAME
 
 PANEL = "/auth/panel"
 CSRF_RE = re.compile(r'name="csrf" value="([^"]+)"')

@@ -5,7 +5,7 @@ Reloj inyectable para probar ventanas y lockout sin dormir.
 
 from __future__ import annotations
 
-from api.throttle import LoginThrottle
+from dulse.adapters.outbound.memory_throttle import LoginThrottle
 
 
 class _Clock:

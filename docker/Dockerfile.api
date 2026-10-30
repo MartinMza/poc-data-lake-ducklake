@@ -23,21 +23,19 @@ RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-ins
     unixodbc-dev \
     && rm -rf /var/lib/apt/lists/*
 
-COPY api/requirements.txt /app/requirements.txt
+COPY requirements.txt /app/requirements.txt
 RUN pip install --no-cache-dir -r /app/requirements.txt
 
 # Pre-instalar extensiones de DuckDB (ducklake, postgres, httpfs) en la imagen
 RUN python -c "import duckdb; con = duckdb.connect(); con.execute('INSTALL ducklake; INSTALL postgres; INSTALL httpfs;')"
 
 COPY src /app/src
-COPY api /app/api
 
-# src/ en el path para que `dulse.*` sea importable sin depender de que el
-# shim api/main.py inyecte la ruta como efecto colateral.
+# src/ en el path para que `dulse.*` sea importable.
 ENV PYTHONPATH=/app/src \
     PYTHONUNBUFFERED=1 \
     API_BIND_HOST=0.0.0.0 \
     API_INTERNAL_PORT=8000
 EXPOSE 8000
 
-CMD ["sh", "-c", "exec uvicorn api.main:app --host ${API_BIND_HOST:-0.0.0.0} --port ${API_INTERNAL_PORT:-8000}"]
+CMD ["sh", "-c", "exec uvicorn dulse.adapters.inbound.http.api:app --host ${API_BIND_HOST:-0.0.0.0} --port ${API_INTERNAL_PORT:-8000}"]

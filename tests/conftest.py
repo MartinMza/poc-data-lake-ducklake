@@ -27,10 +27,10 @@ os.environ.setdefault(
     "AUTH_JWT_SECRET", "test-jwt-secret-0123456789abcdef0123456789abcdef"
 )
 
-from api import auth_db  # noqa: E402
+from dulse.adapters.outbound import postgres_auth as auth_db  # noqa: E402
 
-from api import test_support  # noqa: E402
-from api.test_support import (  # noqa: E402
+from tests import support as test_support  # noqa: E402
+from tests.support import (  # noqa: E402
     PASSWORD,
     SUPERADMIN_PASSWORD,
     SUPERADMIN_USERNAME,
@@ -61,7 +61,7 @@ def _database():
 def _reset_login_throttle():
     """El throttle es un singleton de proceso: se limpia entre tests para que el
     estado de un test no bloquee el login de otro."""
-    from api import throttle
+    from dulse.adapters.outbound import memory_throttle as throttle
 
     throttle.login_throttle = throttle._build_default()
     yield

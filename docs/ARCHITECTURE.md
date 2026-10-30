@@ -19,7 +19,7 @@ src/dulse/
 ## Regla de dependencia
 
 `domain` no importa frameworks, drivers ni las capas `adapters`/`infrastructure`.
-Lo verifica `api/test_architecture.py`: si se cruza el borde, el build falla.
+Lo verifica `tests/test_architecture.py`: si se cruza el borde, el build falla.
 
 ```
 inbound ──▶ ports ◀── outbound
@@ -45,17 +45,6 @@ inbound ──▶ ports ◀── outbound
 | `infrastructure/config.py` | `Settings` (pydantic-settings) + resolución de `.env` | infraestructura |
 | `infrastructure/security.py` | JWT HS256, PBKDF2, middleware de auth | infraestructura |
 
-## Compatibilidad
-
-`api/*.py` son **shims**: re-exportan el módulo real y se reemplazan en
-`sys.modules`, así el estado mutable (singletons) es el mismo objeto. Existen
-para no romper:
-
-- `uvicorn api.main:app` (scripts, Docker, docker-compose)
-- `python -m api.mcp_server` (transporte stdio)
-- `from api.auth import hash_password` (`scripts/hash_password.py`)
-- los tests existentes
-
 ## Agregar código
 
 - Una regla nueva sin I/O → `domain/`.
@@ -67,7 +56,7 @@ para no romper:
 ## Tests
 
 ```bash
-cd api && ./.venv/bin/python -m pytest -q
+.venv/bin/python -m pytest -q
 ```
 
-`api/conftest.py` agrega `src/` al `sys.path`, así no hace falta instalar el paquete.
+`tests/conftest.py` agrega `src/` al `sys.path`, así no hace falta instalar el paquete.

@@ -29,9 +29,9 @@ instrucciones si falta (fail-closed).
 Manual en el host:
 
 ```bash
-uv venv api/.venv --python 3.12
-uv pip install -p api/.venv/bin/python -r api/requirements.txt
-api/.venv/bin/uvicorn api.main:app --host 0.0.0.0 --port 8000 --reload
+uv venv .venv --python 3.12
+uv pip install -p .venv/bin/python -r requirements.txt
+.venv/bin/uvicorn dulse.adapters.inbound.http.api:app --host 0.0.0.0 --port 8000 --reload
 ```
 
 ---
@@ -82,7 +82,7 @@ Reglas:
   `csrf` o header `X-CSRF-Token` que manda HTMX); sin él responden `403`. Los
   formularios pre-autenticación (login, setup, activación) no tienen sesión y
   quedan apoyados en `SameSite=Lax`.
-- El transporte MCP por **stdio** (`python -m api.mcp_server`) corre como
+- El transporte MCP por **stdio** (`python -m dulse.adapters.inbound.mcp.server`) corre como
   proceso local del operador y no pasa por esta autenticación.
 
 ### API key
@@ -104,7 +104,7 @@ curl -s -H "Authorization: Bearer $TOKEN" http://localhost:8000/api/v1/tables
 Generar el hash de un password para `AUTH_USERS`:
 
 ```bash
-api/.venv/bin/python scripts/hash_password.py
+.venv/bin/python scripts/hash_password.py
 # → pbkdf2_sha256$260000$<salt>$<hash>
 ```
 
@@ -168,10 +168,10 @@ Recursos: `lake://catalog` (inventario del lago) y `lake://sqlserver/tables`
 {
   "mcpServers": {
     "dulse-datalake": {
-      "command": "/home/mmediza/orca/workspaces/POC-Data-Lake/dulse/api/.venv/bin/python",
-      "args": ["-m", "api.mcp_server"],
+      "command": "/home/mmediza/orca/workspaces/POC-Data-Lake/dulse/.venv/bin/python",
+      "args": ["-m", "dulse.adapters.inbound.mcp.server"],
       "env": {
-        "PYTHONPATH": "/home/mmediza/orca/workspaces/POC-Data-Lake/dulse",
+        "PYTHONPATH": "/home/mmediza/orca/workspaces/POC-Data-Lake/dulse/src",
         "CATALOG_HOST": "localhost",
         "CATALOG_PORT": "5433",
         "GARAGE_S3_ENDPOINT": "http://localhost:3900"
@@ -203,11 +203,11 @@ Sin credencial el endpoint responde `401`.
 ## 6. Tests
 
 ```bash
-api/.venv/bin/pytest -v api/
+.venv/bin/python -m pytest
 ```
 
-- `api/test_auth.py` — API key, JWT, expiración, firma inválida, rutas
+- `tests/test_auth.py` — API key, JWT, expiración, firma inválida, rutas
   públicas, fail-closed por falta de configuración.
-- `api/test_api_mcp.py` — catálogo bronze-only, inventario SQL Server,
+- `tests/test_api_mcp.py` — catálogo bronze-only, inventario SQL Server,
   paginado, guardrails y tools/recursos del MCP (requiere el stack arriba con
   la data de SQL Server ya ingestada).

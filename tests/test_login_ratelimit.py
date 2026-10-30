@@ -9,8 +9,8 @@ from __future__ import annotations
 import pytest
 from fastapi.testclient import TestClient
 
-from api.main import app
-from api.test_support import PASSWORD, USERNAME
+from dulse.adapters.inbound.http.api import app
+from tests.support import PASSWORD, USERNAME
 
 
 @pytest.fixture

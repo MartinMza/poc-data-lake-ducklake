@@ -1,4 +1,5 @@
 # PoC-local: nunca commitear credenciales efectivas ni artefactos de corrida.
+.venv/
 .env
 scripts/.s3-credentials.env
 *.duckdb

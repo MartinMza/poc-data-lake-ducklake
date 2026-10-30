@@ -7,10 +7,10 @@ import time
 import pytest
 from fastapi.testclient import TestClient
 
-from api import auth
-from api.main import app
+from dulse.infrastructure import security as auth
+from dulse.adapters.inbound.http.api import app
 
-from api.test_support import PASSWORD, TEST_API_KEY, USERNAME
+from tests.support import PASSWORD, TEST_API_KEY, USERNAME
 
 VALID_KEY = TEST_API_KEY
 
@@ -161,7 +161,7 @@ def test_disabling_a_user_invalidates_its_issued_jwt(client):
     El camino Bearer sólo verificaba firma y subject: sin este chequeo, un
     usuario deshabilitado seguía entrando a los datos hasta que venciera el token.
     """
-    from api import auth_db
+    from dulse.adapters.outbound import postgres_auth as auth_db
 
     with auth_db.connection() as conn:
         user = auth_db.verify_login(conn, USERNAME, PASSWORD)

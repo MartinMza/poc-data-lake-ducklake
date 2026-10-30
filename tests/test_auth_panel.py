@@ -12,9 +12,11 @@ from urllib.parse import urlsplit
 import pytest
 from fastapi.testclient import TestClient
 
-from api import auth_db, auth_panel, test_support
-from api.main import app
-from api.test_support import (
+from dulse.adapters.inbound.http import panel as auth_panel
+from dulse.adapters.outbound import postgres_auth as auth_db
+from tests import support as test_support
+from dulse.adapters.inbound.http.api import app
+from tests.support import (
     PASSWORD,
     SUPERADMIN_PASSWORD,
     SUPERADMIN_USERNAME,

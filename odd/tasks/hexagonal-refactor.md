@@ -10,6 +10,7 @@ Rama: `refactor/hexagonal-architecture` (base `origin/main` @ `1f76539`). Driver
 - **S3** — "Usar arquitectura hexagonal"
 - **S4** — Alcance elegido: "Big-bang: mover todo en una rama". Driver: "Preparar producción: más adapters reales".
 - **S5** — No-regresión: los 178 tests existentes siguen verdes; el contrato HTTP (REST, panel, MCP en /mcp) no cambia; los entrypoints (`uvicorn api.main:app`, `python -m api.mcp_server`, docker, scripts) no se rompen.
+- **S6** — "Terminar el refactor: borrar api/ (recomendado)": eliminar la capa de shims y dejar `tests/`, `requirements.txt`, `docker/Dockerfile.api` y `docs/API.md` fuera de `api/`.
 
 ## Tasks
 
@@ -21,6 +22,7 @@ Rama: `refactor/hexagonal-architecture` (base `origin/main` @ `1f76539`). Driver
 - [x] **T8** (S3) — test de regla de dependencia — `ababde6`
 - [x] **T9** (S2) — `docs/ARCHITECTURE.md` + README — `9fc0a03`
 - [x] **T10** (S5) — fixes de la verificación independiente + tests de regresión — `aba76d1`
+- [x] **T11** (S2,S6) — `api/` eliminado: tests → `tests/`, build → `docker/Dockerfile.api` + `requirements.txt`, docs → `docs/API.md`; consumidores y venv raíz actualizados
 
 ## Slices de entrega (para el PR)
 
@@ -37,9 +39,25 @@ Los 8 commits son la unidad de review; no hay un commit gigante:
 | `9fc0a03` | documentación | docs |
 | `aba76d1` | fixes de verificación | correctivo |
 
+## Cierre de `api/` (S6, T11)
+
+`api/` ya no existe. Los entrypoints canónicos son:
+
+| Antes | Ahora |
+|---|---|
+| `uvicorn api.main:app` | `uvicorn dulse.adapters.inbound.http.api:app` |
+| `python -m api.mcp_server` | `python -m dulse.adapters.inbound.mcp.server` |
+| `from api.auth import hash_password` | `from dulse.infrastructure.security import hash_password` |
+| `api/.venv` | `.venv` (raíz) |
+| `api/requirements.txt` | `requirements.txt` |
+| `api/Dockerfile` | `docker/Dockerfile.api` |
+| `api/test_*.py` | `tests/test_*.py` |
+
+Se borraron 10 tests (`test_shim_identity`) porque afirmaban la existencia de los shims; el total honesto baja de 201 a **191**. Los tests restantes no cambiaron ninguna aserción.
+
 ## Evidencia
 
-- Suite: **178 → 201 passed** (+5 settings, +3 puertos, +2 arquitectura, +13 regresión).
+- Suite: **178 → 191 passed** (el pico de 201 incluía los 10 tests de shims ahora inexistentes) (+5 settings, +3 puertos, +2 arquitectura, +13 regresión).
 - Verificación independiente (`gentle-ai-verify`), dos rondas: primera **FAIL** con 2 blockers reales; tras corregirlos, segunda ronda **PASS**.
 - Entrypoints verificados en runtime: `api.main:app` resuelve a FastAPI; `python -m api.mcp_server` arranca el servidor stdio (antes no-op silencioso); `scripts/hash_password.py` funciona.
 - 0 imports `api.*` en todo `src/` (verificado con grep y con test).
@@ -63,4 +81,5 @@ Los 8 commits son la unidad de review; no hay un commit gigante:
 - **L6** — Sin `pip`/setuptools en el venv: no se instala el paquete; `src` se resuelve por `sys.path` y se copia en la imagen.
 - **L7** — Verificación independiente 1: FAIL (stdio no-op con `-m`; `security.py` importaba el shim). Corregido en `aba76d1` con tests de regresión.
 - **L8** — Verificación independiente 2: PASS, 201 tests.
+- **L10** — El usuario detectó que `api/` seguía existiendo y pidió terminarlo ("borrar api/ (recomendado)"). Se eliminó la capa de shims; venv recreado en `.venv` con `uv`.
 - **L9** — Build de la imagen verificado. El smoke test reveló que `dulse` sólo era importable por el shim: se agregó `PYTHONPATH=/app/src` y se re-verificó.

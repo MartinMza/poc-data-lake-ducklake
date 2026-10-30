@@ -14,7 +14,7 @@ import pytest
 
 os.environ.setdefault("AUTH_DB_NAME", "dulse_auth_test")
 
-from api import auth_db  # noqa: E402
+from dulse.adapters.outbound import postgres_auth as auth_db  # noqa: E402
 
 TEST_DB = os.environ["AUTH_DB_NAME"]
 

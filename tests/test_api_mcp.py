@@ -10,8 +10,8 @@ import json
 import pytest
 from fastapi.testclient import TestClient
 
-from api.main import app
-from api.mcp_server import (
+from dulse.adapters.inbound.http.api import app
+from dulse.adapters.inbound.mcp.server import (
     describe_table as mcp_describe_table,
     get_catalog_resource,
     get_sqlserver_catalog_resource,
@@ -22,7 +22,7 @@ from api.mcp_server import (
     sqlserver_tables as mcp_sqlserver_tables,
 )
 
-from api.test_support import TEST_API_KEY  # noqa: E402
+from tests.support import TEST_API_KEY  # noqa: E402
 
 AUTH_HEADERS = {"X-API-Key": TEST_API_KEY}
 

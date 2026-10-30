@@ -17,7 +17,7 @@ Tres comandos. Si los tres funcionan, el sistema está sano.
 ```bash
 docker compose ps --format '{{.Service}}\t{{.Status}}'     # 1. ¿está arriba?
 bronze/.venv/bin/python scripts/lake_counts.py             # 2. ¿hay datos?
-api/.venv/bin/python -m pytest -q api/                     # 3. ¿anda todo?
+.venv/bin/python -m pytest -q                     # 3. ¿anda todo?
 ```
 
 Qué esperar:
@@ -143,7 +143,7 @@ Dos defensas que conviene conocer:
 | Transporte | Cómo se autentica | Cuándo usarlo |
 |---|---|---|
 | HTTP/SSE en `http://localhost:8000/mcp/sse` | header `X-API-Key` o Bearer | agentes y clientes remotos |
-| stdio: `python -m api.mcp_server` | **sin auth** (corre como tu proceso) | Claude Desktop y similares en tu máquina |
+| stdio: `python -m dulse.adapters.inbound.mcp.server` | **sin auth** (corre como tu proceso) | Claude Desktop y similares en tu máquina |
 
 Herramientas: `sqlserver_tables`, `list_tables`, `describe_table`,
 `preview_rows`, `run_query`, `list_snapshots`.
@@ -166,9 +166,9 @@ Eso es por diseño, no un olvido.
 | restaurar el `.bak` | `./scripts/restore_mssql.sh <archivo>.bak FAF12_Kavos` | idempotente, usa `REPLACE` |
 | limpiar datos sintéticos viejos | `bronze/.venv/bin/python scripts/purge_sample_data.py` | dry-run por defecto; `--apply` ejecuta |
 | generar una API key | `openssl rand -hex 24` | 24 caracteres mínimo |
-| generar un usuario JWT | `api/.venv/bin/python scripts/hash_password.py` | `--password-stdin` para automatizar |
+| generar un usuario JWT | `.venv/bin/python scripts/hash_password.py` | `--password-stdin` para automatizar |
 | backup / restore del lake | `./scripts/backup.sh` / `./scripts/restore.sh <backup>` | el restore re-crea el catálogo |
-| correr los tests | `api/.venv/bin/python -m pytest -q api/` | necesitan el stack arriba con datos |
+| correr los tests | `.venv/bin/python -m pytest -q` | necesitan el stack arriba con datos |
 
 El resto (`bootstrap.sh`, `smoke_ducklake.py`, `s3_sync.py`,
 `timetravel_check.py`, `container_init.sh`) es infraestructura: se usa al
@@ -232,7 +232,7 @@ los tiene.
 | `README.md` | el quickstart general |
 | `docs/MANUAL.md` | este manual |
 | `docs/findings*.md` | decisiones, benchmarks y fricciones encontradas |
-| `api/README.md` | detalle de REST + MCP y configuración de clientes |
+| `docs/API.md` | detalle de REST + MCP y configuración de clientes |
 | `bronze/README.md` | cómo ingesta `fast_mssql.py` |
 | `orchestration/README.md` | el flow de Prefect |
 | `scripts/README.md` | procedimiento de infraestructura |
@@ -251,7 +251,7 @@ los tiene.
 Leé en este orden y pará cuando tengas lo que necesitás:
 
 1. Este manual, la sección "5 minutos".
-2. `api/README.md` si vas a tocar la API o el MCP.
+2. `docs/API.md` si vas a tocar la API o el MCP.
 3. `orchestration/README.md` si vas a tocar la ingesta.
 4. `odd/tasks/api-auth-mssql-only.md` para saber qué se decidió y por qué.
 
@@ -262,7 +262,7 @@ Tres cosas que te van a ahorrar tiempo:
 - No uses `docker compose up -d` a secas: levanta `lake-init` y dispara una
   reingesta.
 - El rango de commits de la feature de auth está revisado y aprobado; si tocás
-  `api/auth.py`, esperá otra revisión.
+  `src/dulse/infrastructure/security.py`, esperá otra revisión.
 
 ---
 
@@ -273,7 +273,7 @@ La ruta vieja `/ui` redirige sola.
 
 Es HTML armado en el servidor (Jinja2); las tablas se refrescan con HTMX sin
 recargar la página. No hay build, ni npm, ni CDN: `htmx.min.js` vive en
-`api/static/`.
+`src/dulse/adapters/inbound/http/static/`.
 
 ### Las vistas
 
@@ -340,7 +340,7 @@ pantalla redirige al login.
 ### Si te olvidás el password del superAdmin
 
 ```bash
-HASH=$(api/.venv/bin/python scripts/hash_password.py --password-stdin <<< 'nuevo-password')
+HASH=$(.venv/bin/python scripts/hash_password.py --password-stdin <<< 'nuevo-password')
 docker compose exec -T postgres-catalog psql -U ducklake -d dulse_auth \
   -c "UPDATE users SET password_hash='$HASH' WHERE username='admin';"
 ```
@@ -363,5 +363,5 @@ Ojo: eso borra usuarios y keys. Los datos del lake no se tocan.
 - [ ] `lake_counts.py` muestra 7 tablas `mssql_*` y ~485.557 filas.
 - [ ] `/health` responde 200 sin credencial.
 - [ ] `/api/v1/sqlserver/tables` responde 401 sin credencial y 200 con key.
-- [ ] `pytest -q api/` da 39 passed.
+- [ ] `.venv/bin/python -m pytest -q` da 191 passed.
 - [ ] `docker compose ps` no muestra servicios huérfanos.

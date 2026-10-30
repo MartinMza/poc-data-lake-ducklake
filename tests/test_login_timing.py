@@ -8,8 +8,9 @@ contra un hash señuelo.
 
 from __future__ import annotations
 
-from api import auth, auth_db
-from api.test_support import USERNAME
+from dulse.adapters.outbound import postgres_auth as auth_db
+from dulse.infrastructure import security as auth
+from tests.support import USERNAME
 
 
 def test_usuario_inexistente_verifica_contra_senuelo(monkeypatch):
@@ -31,7 +32,7 @@ def test_hash_senuelo_es_pbkdf2_valido():
 
 
 def test_login_valido_sigue_funcionando():
-    from api.test_support import PASSWORD
+    from tests.support import PASSWORD
 
     with auth_db.connection() as conn:
         user = auth_db.verify_login(conn, USERNAME, PASSWORD)

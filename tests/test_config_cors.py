@@ -10,7 +10,8 @@ from __future__ import annotations
 
 import pytest
 
-from api import config, main
+import dulse.adapters.inbound.http.api as http_api
+from dulse.infrastructure import config
 
 
 @pytest.fixture(autouse=True)
@@ -41,7 +42,7 @@ def test_env_list_usa_default_si_no_esta(monkeypatch):
 
 
 def test_cors_default_no_es_wildcard_ni_credenciales():
-    origins, credentials = main.cors_config()
+    origins, credentials = http_api.cors_config()
     assert "*" not in origins
     assert credentials is False
     assert all(o.startswith("http") for o in origins)
@@ -50,7 +51,7 @@ def test_cors_default_no_es_wildcard_ni_credenciales():
 def test_cors_toma_origenes_del_entorno(monkeypatch):
     monkeypatch.setenv("CORS_ALLOW_ORIGINS", "https://dash.example,https://app.example")
     monkeypatch.setenv("CORS_ALLOW_CREDENTIALS", "true")
-    origins, credentials = main.cors_config()
+    origins, credentials = http_api.cors_config()
     assert origins == ["https://dash.example", "https://app.example"]
     assert credentials is True
 
@@ -58,6 +59,6 @@ def test_cors_toma_origenes_del_entorno(monkeypatch):
 def test_cors_wildcard_con_credenciales_desactiva_credenciales(monkeypatch):
     monkeypatch.setenv("CORS_ALLOW_ORIGINS", "*")
     monkeypatch.setenv("CORS_ALLOW_CREDENTIALS", "true")
-    origins, credentials = main.cors_config()
+    origins, credentials = http_api.cors_config()
     assert origins == ["*"]
     assert credentials is False  # la guarda gana

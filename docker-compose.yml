@@ -141,7 +141,7 @@ services:
   lake-api:
     build:
       context: .
-      dockerfile: api/Dockerfile
+      dockerfile: docker/Dockerfile.api
     container_name: dulse-lake-api
     restart: unless-stopped
     ports:

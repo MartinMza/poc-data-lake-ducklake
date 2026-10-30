@@ -17,7 +17,7 @@ def auth_headers() -> dict[str, str]:
 
 def seed() -> None:
     """Deja la base de prueba en un estado conocido (superAdmin + usuario + key)."""
-    from api import auth_db
+    from dulse.adapters.outbound import postgres_auth as auth_db
 
     with auth_db.connection() as conn:
         conn.execute(

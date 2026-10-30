@@ -2,8 +2,8 @@
 """Genera el hash PBKDF2 de un password para `AUTH_USERS`.
 
 Uso:
-    api/.venv/bin/python scripts/hash_password.py            # pide el password
-    echo 'mi-password' | api/.venv/bin/python scripts/hash_password.py --password-stdin
+    .venv/bin/python scripts/hash_password.py            # pide el password
+    echo 'mi-password' | .venv/bin/python scripts/hash_password.py --password-stdin
 
 El password nunca se pasa por argumento: quedaría en el `history` del shell y
 visible en `ps` para otros usuarios del host.
@@ -20,9 +20,9 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(ROOT))
+sys.path.insert(0, str(ROOT / "src"))
 
-from api.auth import hash_password  # noqa: E402
+from dulse.infrastructure.security import hash_password  # noqa: E402
 
 
 def main(argv: list[str] | None = None) -> int:

@@ -10,7 +10,7 @@ from __future__ import annotations
 import pytest
 from fastapi import Response
 
-from api import auth_panel
+from dulse.adapters.inbound.http import panel as auth_panel
 
 
 def _set_cookie_header(monkeypatch, value: str | None) -> str:

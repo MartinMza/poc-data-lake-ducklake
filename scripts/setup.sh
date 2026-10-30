@@ -185,14 +185,21 @@ echo "==> [3/6] Ejecutando bootstrap del Lakehouse (Catálogo + Garage S3)..."
 # 4. Entornos virtuales Python 3.12 con uv
 echo ""
 echo "==> [4/6] Configurando entornos virtuales Python 3.12 (uv)..."
-for mod in bronze orchestration api; do
+# venv raíz: API REST + panel + MCP + suite de tests
+if [[ ! -f ".venv/bin/python" ]]; then
+  uv venv .venv --python 3.12
+fi
+uv pip install -p .venv/bin/python -r requirements.txt --quiet
+echo "    -> Entorno raíz (.venv) listo (API/MCP/tests)"
+
+for mod in bronze orchestration; do
   echo "    -> Módulo: $mod"
   if [[ ! -f "$mod/.venv/bin/python" ]]; then
     uv venv "$mod/.venv" --python 3.12
   fi
   uv pip install -p "$mod/.venv/bin/python" -r "$mod/requirements.txt" --quiet
 done
-echo "    Entornos virtuales listos (bronze, orchestration, api)."
+echo "    Entornos virtuales listos (bronze, orchestration)."
 
 # 5. Pipeline: detección de .bak en ./mssql-backup/ + restore + ingesta MSSQL
 echo ""
@@ -274,7 +281,7 @@ fi
 # 6. Validación de API REST y Servidor MCP
 echo ""
 echo "==> [6/6] Validando API REST (FastAPI) y Servidor MCP (FastMCP)..."
-api/.venv/bin/pytest -q api/test_api_mcp.py
+.venv/bin/python -m pytest -q tests/test_api_mcp.py
 
 if [[ "$START_API" == "true" ]]; then
   echo ""

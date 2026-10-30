@@ -32,7 +32,7 @@ SQL Server (.bak) ──restore──▶ mssql ──bcp/MERGE (fast) o dlt─�
 | Ingesta bronze | `bronze/fast_mssql.py` (principal: bcp → staging → MERGE) y `bronze/pipeline_mssql.py` (fallback dlt) | `bronze/` |
 | Purga de data de ejemplo | deja solo las 7 tablas reales (dry-run por defecto) | `scripts/purge_sample_data.py` |
 | Orquestación | Flow `dulse-medallion`: restore condicional → ingesta MSSQL | `orchestration/` |
-| Servicio | API REST (FastAPI) + MCP (FastMCP) con auth obligatoria | `src/dulse/` (entrypoints en `api/`) |
+| Servicio | API REST (FastAPI) + MCP (FastMCP) con auth obligatoria | `src/dulse/` |
 | Operación | backup/restore del lago, time travel, conteos | `scripts/` |
 
 Layout del código, puertos/adaptadores y regla de dependencia:
@@ -74,8 +74,8 @@ PREFECT_API_URL=http://localhost:4200/api MSSQL_DATABASE=FAF12_Kavos \
   orchestration/.venv/bin/python orchestration/flow.py
 
 # 4. API + MCP
-uv venv api/.venv --python 3.12
-uv pip install -p api/.venv/bin/python -r api/requirements.txt
+uv venv .venv --python 3.12
+uv pip install -p .venv/bin/python -r requirements.txt
 ./scripts/run_api.sh
 ```
 
@@ -110,7 +110,7 @@ curl -s -H "X-API-Key: $AUTH_API_KEYS" \
 MCP: `sqlserver_tables`, `list_tables`, `describe_table`, `preview_rows`,
 `run_query`, `list_snapshots`, más los recursos `lake://catalog` y
 `lake://sqlserver/tables`. Detalle, configuración de clientes y ejemplos en
-`api/README.md`.
+`docs/API.md`.
 
 ## Data disponible (subset real de SQL Server)
 
@@ -150,8 +150,8 @@ lineal, no materializado. Lectura clave: 50 GB nominales ≈ 5,3 GB de Parquet
 
 | Slice | Evidencia |
 |---|---|
-| Auth | `api/test_auth.py` 14 tests (key, JWT, expiración, firma inválida, `/health` público, fail-closed) |
-| API/MCP sobre data real | `api/test_api_mcp.py` 16 tests (bronze-only, inventario SQL Server, paginado, guardrails, tools/recursos) |
+| Auth | `tests/test_auth.py` 14 tests (key, JWT, expiración, firma inválida, `/health` público, fail-closed) |
+| API/MCP sobre data real | `tests/test_api_mcp.py` 16 tests (bronze-only, inventario SQL Server, paginado, guardrails, tools/recursos) |
 | Ingesta MSSQL | 7 tablas, 485 557 filas, paridad fast vs dlt verificada (`bronze/fast_ground_truth.json`) |
 | Purga de data de ejemplo | `purge_sample_data.py --apply` + re-ejecución idempotente ("nada que purgar") |
 | Backup/restore del lago | dump + espejo + manifold verificado (14/14 conteos en el ciclo histórico) |

@@ -10,8 +10,10 @@ from __future__ import annotations
 import pytest
 from fastapi.testclient import TestClient
 
-from api import auth, config, test_support
-from api.main import app
+from dulse.infrastructure import config
+from dulse.infrastructure import security as auth
+from tests import support as test_support
+from dulse.adapters.inbound.http.api import app
 
 
 # --- #5: guard de credenciales por defecto -----------------------------------
@@ -75,7 +77,7 @@ def test_error_500_no_filtra_el_detalle(monkeypatch):
     def boom(**kwargs):
         raise RuntimeError(secret_detail)
 
-    monkeypatch.setattr("api.main.engine.list_tables", boom)
+    monkeypatch.setattr("dulse.adapters.inbound.http.api.engine.list_tables", boom)
     with TestClient(app, headers=test_support.auth_headers()) as client:
         response = client.get("/api/v1/tables")
     assert response.status_code == 500
