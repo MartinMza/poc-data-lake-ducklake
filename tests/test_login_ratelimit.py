@@ -9,7 +9,7 @@ from __future__ import annotations
 import pytest
 from fastapi.testclient import TestClient
 
-from dulse.adapters.inbound.http.api import app
+from kavos_lake.adapters.inbound.http.api import app
 from tests.support import PASSWORD, USERNAME
 
 

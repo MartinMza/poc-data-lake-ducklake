@@ -16,7 +16,7 @@ import threading
 import time
 from typing import Callable
 
-from dulse.infrastructure import config
+from kavos_lake.infrastructure import config
 
 
 def _normalize(key: str) -> str:

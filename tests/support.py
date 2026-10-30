@@ -7,7 +7,7 @@ SUPERADMIN_PASSWORD = "root-password-123"
 USERNAME = "ana"
 PASSWORD = "ana-password-123"
 # 48 hex, mismo formato que una key real generada por `auth_db`.
-TEST_API_KEY = "dulse_" + "a1b2c3d4" * 6
+TEST_API_KEY = "kavos_lake_" + "a1b2c3d4" * 6
 
 
 def auth_headers() -> dict[str, str]:
@@ -17,7 +17,7 @@ def auth_headers() -> dict[str, str]:
 
 def seed() -> None:
     """Deja la base de prueba en un estado conocido (superAdmin + usuario + key)."""
-    from dulse.adapters.outbound import postgres_auth as auth_db
+    from kavos_lake.adapters.outbound import postgres_auth as auth_db
 
     with auth_db.connection() as conn:
         conn.execute(

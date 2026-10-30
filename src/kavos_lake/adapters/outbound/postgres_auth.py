@@ -1,6 +1,6 @@
 """Persistencia de credenciales (usuarios, API keys y sesiones) en Postgres.
 
-Vive en una base aparte, `dulse_auth`, dentro del mismo servidor que el catálogo
+Vive en una base aparte, `kavos_lake_auth`, dentro del mismo servidor que el catálogo
 DuckLake: el esquema del lake no se toca y su backup sigue siendo sólo del
 catálogo.
 
@@ -25,8 +25,8 @@ from typing import Any, Iterator
 import psycopg
 from psycopg.rows import dict_row
 
-from dulse.infrastructure import security as auth
-from dulse.infrastructure import config
+from kavos_lake.infrastructure import security as auth
+from kavos_lake.infrastructure import config
 
 MAX_ACTIVE_KEYS = 5
 MAX_EXPIRY_DAYS = 180
@@ -40,7 +40,7 @@ RANDOM_PASSWORD_GROUP_LENGTH = 4
 # Sin caracteres que se confunden al dictar: 0/O, 1/l/I, 5/S
 RANDOM_PASSWORD_ALPHABET = "abcdefghjkmnpqrtuvwxyz2346789"
 
-KEY_PREFIX = "dulse_"
+KEY_PREFIX = "kavos_lake_"
 KEY_RANDOM_BYTES = 24
 VISIBLE_PREFIX_LENGTH = 12
 PBKDF2_PREFIX = "pbkdf2_sha256"
@@ -114,7 +114,7 @@ class AuthDbError(Exception):
 
 
 def database_name() -> str:
-    return (os.environ.get("AUTH_DB_NAME") or "dulse_auth").strip()
+    return (os.environ.get("AUTH_DB_NAME") or "kavos_lake_auth").strip()
 
 
 def dsn() -> str:

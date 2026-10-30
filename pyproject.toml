@@ -3,9 +3,9 @@ requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "dulse"
+name = "kavos-lake"
 version = "0.1.0"
-description = "Dulse Data Lake: API REST, panel de acceso y MCP sobre DuckLake."
+description = "KavosLake Data Platform: API REST, panel de acceso y MCP sobre DuckLake."
 requires-python = ">=3.12"
 
 [tool.setuptools]

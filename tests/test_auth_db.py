@@ -1,6 +1,6 @@
 """Tests de la persistencia de credenciales (`api/auth_db.py`).
 
-Corren contra un Postgres real, en una base aparte (`dulse_auth_test`) que se
+Corren contra un Postgres real, en una base aparte (`kavos_lake_auth_test`) que se
 crea y se vacía sola: estas reglas no se pueden probar contra un mock sin
 mentir sobre lo que hacen.
 """
@@ -12,9 +12,9 @@ import os
 import psycopg
 import pytest
 
-os.environ.setdefault("AUTH_DB_NAME", "dulse_auth_test")
+os.environ.setdefault("AUTH_DB_NAME", "kavos_lake_auth_test")
 
-from dulse.adapters.outbound import postgres_auth as auth_db  # noqa: E402
+from kavos_lake.adapters.outbound import postgres_auth as auth_db  # noqa: E402
 
 TEST_DB = os.environ["AUTH_DB_NAME"]
 
@@ -80,7 +80,7 @@ def test_disabled_user_cannot_log_in(conn):
 def test_api_key_is_returned_once_and_stored_hashed(conn):
     user = _user(conn)
     key, row = auth_db.create_api_key(conn, user_id=user["id"], expires_in_days=30)
-    assert key.startswith("dulse_")
+    assert key.startswith("kavos_lake_")
     assert row["visible_prefix"] == key[:12]
     with conn.cursor() as cur:
         cur.execute("SELECT * FROM api_keys")
@@ -95,7 +95,7 @@ def test_api_key_authenticates_only_while_valid(conn):
     user = _user(conn)
     key, _ = auth_db.create_api_key(conn, user_id=user["id"], expires_in_days=30)
     assert auth_db.authenticate_api_key(conn, key)["username"] == "ana"
-    assert auth_db.authenticate_api_key(conn, "dulse_inventada") is None
+    assert auth_db.authenticate_api_key(conn, "kavos_lake_inventada") is None
     assert auth_db.authenticate_api_key(conn, "") is None
 
 

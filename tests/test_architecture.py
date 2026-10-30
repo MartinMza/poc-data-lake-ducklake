@@ -9,7 +9,7 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
-DOMAIN_DIR = Path(__file__).resolve().parents[1] / "src" / "dulse" / "domain"
+DOMAIN_DIR = Path(__file__).resolve().parents[1] / "src" / "kavos_lake" / "domain"
 
 FORBIDDEN_ROOTS = {
     "fastapi",
@@ -24,7 +24,7 @@ FORBIDDEN_ROOTS = {
     "pydantic_settings",
     "mcp",
 }
-FORBIDDEN_PREFIXES = ("dulse.adapters", "dulse.infrastructure")
+FORBIDDEN_PREFIXES = ("kavos_lake.adapters", "kavos_lake.infrastructure")
 
 
 def _imports(path: Path) -> list[str]:

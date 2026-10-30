@@ -1,4 +1,4 @@
-"""`python -m dulse.adapters.inbound.mcp.server` arranca el servidor stdio.
+"""`python -m kavos_lake.adapters.inbound.mcp.server` arranca el servidor stdio.
 
 El módulo real conserva el guard de `__main__`, así el transporte stdio para
 Claude Desktop y similares sigue funcionando sin los shims de `api/`.
@@ -8,12 +8,12 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from dulse.adapters.inbound.mcp import server as mcp_server
+from kavos_lake.adapters.inbound.mcp import server as mcp_server
 
 SERVER = (
     Path(__file__).resolve().parents[1]
     / "src"
-    / "dulse"
+    / "kavos_lake"
     / "adapters"
     / "inbound"
     / "mcp"

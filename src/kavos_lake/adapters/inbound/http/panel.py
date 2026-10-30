@@ -21,12 +21,12 @@ from fastapi import APIRouter, Form, HTTPException, Request, Response, status
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 
-from dulse.adapters.outbound import memory_throttle as throttle
-from dulse.adapters.outbound import postgres_auth as auth_db
-from dulse.infrastructure import config
-from dulse.infrastructure import security as auth
+from kavos_lake.adapters.outbound import memory_throttle as throttle
+from kavos_lake.adapters.outbound import postgres_auth as auth_db
+from kavos_lake.infrastructure import config
+from kavos_lake.infrastructure import security as auth
 
-COOKIE_NAME = "dulse_session"
+COOKIE_NAME = "kavos_lake_session"
 TEMPLATES_DIR = Path(__file__).resolve().parent / "templates"
 templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
 router = APIRouter(prefix="/auth/panel", tags=["Panel"], include_in_schema=False)

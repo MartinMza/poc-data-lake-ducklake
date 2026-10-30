@@ -12,7 +12,7 @@ import re
 import pytest
 from fastapi.testclient import TestClient
 
-from dulse.adapters.inbound.http.api import app
+from kavos_lake.adapters.inbound.http.api import app
 from tests.support import PASSWORD, SUPERADMIN_PASSWORD, SUPERADMIN_USERNAME, USERNAME
 
 PANEL = "/auth/panel"

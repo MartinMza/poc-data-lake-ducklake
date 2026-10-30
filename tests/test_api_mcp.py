@@ -10,8 +10,8 @@ import json
 import pytest
 from fastapi.testclient import TestClient
 
-from dulse.adapters.inbound.http.api import app
-from dulse.adapters.inbound.mcp.server import (
+from kavos_lake.adapters.inbound.http.api import app
+from kavos_lake.adapters.inbound.mcp.server import (
     describe_table as mcp_describe_table,
     get_catalog_resource,
     get_sqlserver_catalog_resource,

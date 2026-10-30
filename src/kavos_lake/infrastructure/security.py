@@ -1,4 +1,4 @@
-"""Autenticación de Dulse Lake: API keys (servicio) + JWT HS256 (usuarios).
+"""Autenticación de KavosLake Lake: API keys (servicio) + JWT HS256 (usuarios).
 
 Dos credenciales válidas, indistintas para cualquier ruta protegida:
 
@@ -15,7 +15,7 @@ Configuración (env o `.env`):
 | `AUTH_USERS` | *(vacío)* | `usuario:secreto,usuario2:secreto`; secreto plano o `pbkdf2_sha256$iter$salt$hash` |
 | `AUTH_JWT_SECRET` | *(vacío)* | obligatorio si hay usuarios; secreto HS256 |
 | `AUTH_JWT_TTL_MINUTES` | `60` | vigencia del access token |
-| `AUTH_JWT_ISSUER` | `dulse-lake-api` | claim `iss` esperado |
+| `AUTH_JWT_ISSUER` | `kavos-lake-api` | claim `iss` esperado |
 
 Fail-closed: si no hay API keys ni usuarios configurados, la aplicación se
 niega a arrancar (`assert_configured`). El transporte MCP por `stdio` corre
@@ -33,7 +33,7 @@ from typing import Any, Iterable, Mapping
 
 import jwt
 
-from dulse.infrastructure.config import env, env_int
+from kavos_lake.infrastructure.config import env, env_int
 
 API_KEY_HEADER = "x-api-key"
 API_KEYS_ENV = "AUTH_API_KEYS"
@@ -43,7 +43,7 @@ JWT_TTL_ENV = "AUTH_JWT_TTL_MINUTES"
 JWT_ISSUER_ENV = "AUTH_JWT_ISSUER"
 
 DEFAULT_TTL_MINUTES = 60
-DEFAULT_ISSUER = "dulse-lake-api"
+DEFAULT_ISSUER = "kavos-lake-api"
 JWT_ALGORITHM = "HS256"
 
 # Entropía mínima del secreto HS256. Un secreto corto o adivinable firma tokens
@@ -189,7 +189,7 @@ def verify_password(stored: str, provided: str) -> bool:
 
 def authenticate(username: str, password: str) -> str:
     """Valida usuario/password contra la base y devuelve el subject."""
-    from dulse.adapters.outbound import postgres_auth as auth_db  # import local: auth_db importa este módulo
+    from kavos_lake.adapters.outbound import postgres_auth as auth_db  # import local: auth_db importa este módulo
 
     with auth_db.connection() as conn:
         user = auth_db.verify_login(conn, username, password)
@@ -249,7 +249,7 @@ def user_can_authenticate(username: str) -> bool:
     un usuario ya deshabilitado, y el punto de deshabilitarlo es que deje de
     entrar ya. El costo es un roundtrip a Postgres por request con Bearer.
     """
-    from dulse.adapters.outbound import postgres_auth as auth_db  # import local: auth_db importa este módulo
+    from kavos_lake.adapters.outbound import postgres_auth as auth_db  # import local: auth_db importa este módulo
 
     try:
         with auth_db.connection() as conn:
@@ -261,7 +261,7 @@ def user_can_authenticate(username: str) -> bool:
 
 def _lookup_api_key(candidate: str) -> dict[str, Any] | None:
     """Busca la API key en la base. Sin cache: revocar debe cortar en el acto."""
-    from dulse.adapters.outbound import postgres_auth as auth_db  # import local: auth_db importa este módulo
+    from kavos_lake.adapters.outbound import postgres_auth as auth_db  # import local: auth_db importa este módulo
 
     try:
         with auth_db.connection() as conn:

@@ -6,9 +6,9 @@ antes de que lo haga la capa de entrada.
 
 from __future__ import annotations
 
-from dulse.adapters.outbound import duckdb_engine, memory_throttle, postgres_auth
-from dulse.ports.engine import QueryEnginePort
-from dulse.ports.identity import (
+from kavos_lake.adapters.outbound import duckdb_engine, memory_throttle, postgres_auth
+from kavos_lake.ports.engine import QueryEnginePort
+from kavos_lake.ports.identity import (
     ApiKeyRepositoryPort,
     SessionRepositoryPort,
     ThrottlePort,

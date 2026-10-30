@@ -10,8 +10,8 @@ from __future__ import annotations
 
 import pytest
 
-import dulse.adapters.inbound.http.api as http_api
-from dulse.infrastructure import config
+import kavos_lake.adapters.inbound.http.api as http_api
+from kavos_lake.infrastructure import config
 
 
 @pytest.fixture(autouse=True)

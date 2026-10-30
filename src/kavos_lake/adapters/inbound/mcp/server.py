@@ -1,4 +1,4 @@
-"""Dulse Lake FastMCP Server — herramientas para explorar la data cargada desde SQL Server.
+"""KavosLake FastMCP Server — herramientas para explorar la data cargada desde SQL Server.
 
 El lago contiene únicamente las 7 tablas reales ingestadas desde SQL Server
 (`bronze.mssql_bs_*` y `bronze.mssql_d_mart_*`) más los metadatos de dlt.
@@ -12,10 +12,10 @@ from typing import Any
 
 from fastmcp import FastMCP
 
-from dulse.adapters.outbound import duckdb_engine as engine
+from kavos_lake.adapters.outbound import duckdb_engine as engine
 
 mcp = FastMCP(
-    "dulse-datalake",
+    "kavos-lake",
     instructions=(
         "Servidor MCP para consultar el Data Lake DuckLake. El contenido proviene "
         "íntegramente de SQL Server (esquema bronze: mssql_bs_* y mssql_d_mart_*). "

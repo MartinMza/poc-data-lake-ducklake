@@ -8,8 +8,8 @@ contra un hash señuelo.
 
 from __future__ import annotations
 
-from dulse.adapters.outbound import postgres_auth as auth_db
-from dulse.infrastructure import security as auth
+from kavos_lake.adapters.outbound import postgres_auth as auth_db
+from kavos_lake.infrastructure import security as auth
 from tests.support import USERNAME
 
 

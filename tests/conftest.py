@@ -1,7 +1,7 @@
 """Fixtures compartidas: base de credenciales de prueba y credenciales fijas.
 
 Los tests corren contra un Postgres real, en una base aparte
-(`dulse_auth_test`) que se crea y se siembra sola. Nada de mocks: lo que se
+(`kavos_lake_auth_test`) que se crea y se siembra sola. Nada de mocks: lo que se
 prueba es exactamente lo que va a correr en producción.
 """
 
@@ -11,14 +11,14 @@ import os
 import sys
 from pathlib import Path
 
-# Layout src/: el paquete dulse vive en src/dulse y no se instala con pip en el
+# Layout src/: el paquete kavos_lake vive en src/kavos_lake y no se instala con pip en el
 # venv de desarrollo, así que se agrega la raíz de paquetes al path del proceso.
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 import psycopg
 import pytest
 
-TEST_DB = "dulse_auth_test"
+TEST_DB = "kavos_lake_auth_test"
 # Sin credenciales legadas: la migración del entorno no debe correr en tests.
 os.environ["AUTH_USERS"] = ""
 os.environ["AUTH_API_KEYS"] = ""
@@ -27,7 +27,7 @@ os.environ.setdefault(
     "AUTH_JWT_SECRET", "test-jwt-secret-0123456789abcdef0123456789abcdef"
 )
 
-from dulse.adapters.outbound import postgres_auth as auth_db  # noqa: E402
+from kavos_lake.adapters.outbound import postgres_auth as auth_db  # noqa: E402
 
 from tests import support as test_support  # noqa: E402
 from tests.support import (  # noqa: E402
@@ -61,7 +61,7 @@ def _database():
 def _reset_login_throttle():
     """El throttle es un singleton de proceso: se limpia entre tests para que el
     estado de un test no bloquee el login de otro."""
-    from dulse.adapters.outbound import memory_throttle as throttle
+    from kavos_lake.adapters.outbound import memory_throttle as throttle
 
     throttle.login_throttle = throttle._build_default()
     yield

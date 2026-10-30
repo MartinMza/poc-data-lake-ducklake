@@ -12,10 +12,10 @@ from urllib.parse import urlsplit
 import pytest
 from fastapi.testclient import TestClient
 
-from dulse.adapters.inbound.http import panel as auth_panel
-from dulse.adapters.outbound import postgres_auth as auth_db
+from kavos_lake.adapters.inbound.http import panel as auth_panel
+from kavos_lake.adapters.outbound import postgres_auth as auth_db
 from tests import support as test_support
-from dulse.adapters.inbound.http.api import app
+from kavos_lake.adapters.inbound.http.api import app
 from tests.support import (
     PASSWORD,
     SUPERADMIN_PASSWORD,
@@ -111,7 +111,7 @@ def test_login_sets_a_session_cookie_and_opens_the_panel(client):
     response = _login(client)
     assert response.status_code == 303
     assert response.headers["location"] == PANEL
-    assert client.cookies.get("dulse_session")
+    assert client.cookies.get("kavos_lake_session")
     page = client.get(PANEL)
     assert page.status_code == 200
     assert "Mis API keys" in page.text
@@ -148,7 +148,7 @@ def test_creating_a_key_shows_it_once_and_then_lists_it(client):
     match = KEY_RE.search(response.text)
     assert match, "la key recién creada se muestra una sola vez"
     key = match.group(1)
-    assert key.startswith("dulse_")
+    assert key.startswith("kavos_lake_")
     with auth_db.connection() as conn:
         assert auth_db.authenticate_api_key(conn, key) is not None
     refreshed = client.get(PANEL)

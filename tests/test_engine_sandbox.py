@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import pytest
 
-from dulse.adapters.outbound import duckdb_engine as engine
+from kavos_lake.adapters.outbound import duckdb_engine as engine
 
 
 # --- contrato vigente: lo que ya funcionaba debe seguir funcionando ----------

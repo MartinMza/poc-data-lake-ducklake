@@ -1,4 +1,4 @@
-"""Dulse Lake Query Engine — conexión DuckLake, catálogo, tablas MSSQL y guardrails SQL.
+"""KavosLake Query Engine — conexión DuckLake, catálogo, tablas MSSQL y guardrails SQL.
 
 El lago contiene únicamente las 7 tablas reales ingestadas desde SQL Server
 (`bronze.mssql_bs_*` y `bronze.mssql_d_mart_*`) más los metadatos internos de
@@ -15,7 +15,7 @@ from typing import Any
 
 import duckdb
 
-from dulse.domain.sql_policy import (
+from kavos_lake.domain.sql_policy import (
     ALLOWED_START_KEYWORDS,
     DEFAULT_SCHEMAS,
     DLT_METADATA_PREFIX,
@@ -27,7 +27,7 @@ from dulse.domain.sql_policy import (
     validate_sql,
 )
 
-from dulse.infrastructure.config import assert_safe_credentials, env as _env
+from kavos_lake.infrastructure.config import assert_safe_credentials, env as _env
 
 _lock = threading.Lock()
 _con: duckdb.DuckDBPyConnection | None = None

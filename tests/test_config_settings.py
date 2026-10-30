@@ -10,7 +10,7 @@ from __future__ import annotations
 import pytest
 from pydantic import ValidationError
 
-from dulse.infrastructure import config
+from kavos_lake.infrastructure import config
 
 
 def test_settings_valida_rango_de_enteros(monkeypatch):

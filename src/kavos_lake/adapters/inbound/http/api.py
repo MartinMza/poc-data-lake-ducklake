@@ -1,4 +1,4 @@
-"""Dulse Data Lake — FastAPI Application con endpoints REST y montaje FastMCP."""
+"""KavosLake Data Platform — FastAPI Application con endpoints REST y montaje FastMCP."""
 
 from __future__ import annotations
 
@@ -15,15 +15,15 @@ from fastapi.responses import JSONResponse, PlainTextResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from dulse.adapters.inbound.http import panel as auth_panel
-from dulse.adapters.inbound.mcp.server import mcp
-from dulse.adapters.outbound import duckdb_engine as engine
-from dulse.adapters.outbound import memory_throttle as throttle
-from dulse.adapters.outbound import postgres_auth as auth_db
-from dulse.infrastructure import config
-from dulse.infrastructure import security as auth
+from kavos_lake.adapters.inbound.http import panel as auth_panel
+from kavos_lake.adapters.inbound.mcp.server import mcp
+from kavos_lake.adapters.outbound import duckdb_engine as engine
+from kavos_lake.adapters.outbound import memory_throttle as throttle
+from kavos_lake.adapters.outbound import postgres_auth as auth_db
+from kavos_lake.infrastructure import config
+from kavos_lake.infrastructure import security as auth
 
-logger = logging.getLogger("dulse.auth")
+logger = logging.getLogger("kavos_lake.auth")
 STATIC_DIR = Path(__file__).resolve().parent / "static"
 
 
@@ -88,7 +88,7 @@ def cors_config() -> tuple[list[str], bool]:
 
 
 app = FastAPI(
-    title="Dulse Data Lake API & MCP",
+    title="KavosLake Data Platform API & MCP",
     version="1.0.0",
     # La documentación se sirve con guardas propias (ver más abajo): el esquema
     # de la API no queda expuesto sin sesión del panel.
@@ -210,7 +210,7 @@ def swagger_ui(request: Request):
     blocked = _docs_gate(request, "/docs")
     if blocked is not None:
         return blocked
-    return get_swagger_ui_html(openapi_url="/openapi.json", title="Dulse Data Lake · API")
+    return get_swagger_ui_html(openapi_url="/openapi.json", title="KavosLake Data Platform · API")
 
 
 @app.get("/redoc", include_in_schema=False)
@@ -218,7 +218,7 @@ def redoc_ui(request: Request):
     blocked = _docs_gate(request, "/redoc")
     if blocked is not None:
         return blocked
-    return get_redoc_html(openapi_url="/openapi.json", title="Dulse Data Lake · API")
+    return get_redoc_html(openapi_url="/openapi.json", title="KavosLake Data Platform · API")
 
 
 @app.post("/auth/token", response_model=TokenResponse, tags=["Auth"])
@@ -255,7 +255,7 @@ def health_check():
     """Verifica el estado del servicio y conectividad básica."""
     return {
         "status": "healthy",
-        "service": "dulse-lake-api",
+        "service": "kavos-lake-api",
         "version": "1.0.0",
         "mcp_mounted": True,
     }

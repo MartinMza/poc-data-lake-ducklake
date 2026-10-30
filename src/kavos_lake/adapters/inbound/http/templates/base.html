@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>{% block title %}Panel de acceso{% endblock %} · Dulse Data Lake</title>
+<title>{% block title %}Panel de acceso{% endblock %} · KavosLake Data Platform</title>
 <script src="/static/htmx.min.js" defer></script>
 <script defer>
   // Botón "ver contraseña": alterna el tipo del input, sin dependencias.
@@ -123,7 +123,7 @@
 <body{% if user %} hx-headers='{"X-CSRF-Token": "{{ user.csrf_token }}"}'{% endif %}>
 {% if user %}
 <header class="top">
-  <div class="brand">Dulse <span>· panel de acceso</span></div>
+  <div class="brand">KavosLake <span>· panel de acceso</span></div>
   <nav class="tabs">
     <a href="/auth/panel" class="{% if tab == 'keys' %}active{% endif %}">Mis API keys</a>
     {% if user.role == 'superadmin' %}
