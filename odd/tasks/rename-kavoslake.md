@@ -13,12 +13,26 @@ Rama: `refactor/rename-kavoslake` (stacked sobre `refactor/hexagonal-architectur
 
 ## Tasks
 
-- [ ] **T1** (S2,S4) — Paquete: `src/dulse` → `src/kavos_lake`, imports, pyproject, tests.
-- [ ] **T2** (S3,S4) — Identificadores de runtime: DB, cookie, issuer, prefijo de keys, MCP name, env de purga.
-- [ ] **T3** (S3) — Contenedores, imágenes y compose.
-- [ ] **T4** (S3) — Migración de datos: script idempotente `ALTER DATABASE` + guía de operador.
-- [ ] **T5** (S2) — Docs, títulos, `.env.example`, README.
-- [ ] **T6** — Verificación: suite, docker build, grep de residuos.
+- [x] **T1** (S2,S4) — Paquete: `src/dulse` → `src/kavos_lake`, imports, pyproject, tests — `310885d`
+- [x] **T2** (S3,S4) — Identificadores de runtime: DB, cookie, issuer, prefijo, MCP name, env de purga — `a12e49e`
+- [x] **T3** (S3) — Contenedores, imágenes y compose — `a12e49e`, normalizado en `6a2f848`
+- [x] **T4** (S3) — Script de migración idempotente + guía de operador — `a12e49e`
+- [x] **T5** (S2) — Docs, títulos, README, MANUAL — `231dde8`; **`.env.example` pendiente del usuario** (bloqueado por política)
+- [x] **T6** — Verificación: suite, docker build, grep, verificación independiente (2 rondas)
+- [x] **T7** — Test de regresión del rename (5 tests)
+
+## Evidencia
+
+- Suite: **191 → 196 passed**.
+- Verificación independiente 1: **FAIL** — encontró nombres malformados (`kavos_lake-lake-pipeline`) y el `.env.example` viejo.
+- Verificación independiente 2: **FAIL sólo por `.env.example`** (bloqueado para el agente); el resto PASS.
+- Imagen: `kavos-lake-api:rename` construida; CMD apunta a `kavos_lake.adapters.inbound.http.api:app`; `import dulse` falla (nombre viejo eliminado); templates presentes; sin `/app/api`.
+- Migración: `bash -n` OK, dry-run no muta, argumento inválido → exit 2.
+
+## Bloqueado (requiere al usuario)
+
+`.env.example`, líneas 34 y 40: `dulse_auth` → `kavos_lake_auth` (dos líneas). Sin eso, un clon nuevo (`setup.sh` copia ese archivo) apunta a la base vieja.
+También: la carpeta del repo sigue llamándose `dulse` y el `.env` local conserva `AUTH_DB_NAME`/password viejos.
 
 ## Log
 
