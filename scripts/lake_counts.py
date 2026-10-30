@@ -44,8 +44,7 @@ def connect():
     )
     garage_host = _env("GARAGE_HOST", "localhost")
     garage_port = _env("GARAGE_S3_PORT", "3900")
-    endpoint = _env("GARAGE_S3_ENDPOINT", f"{garage_host}:{garage_port}")
-    endpoint_host = endpoint.removeprefix("http://").removeprefix("https://")
+    endpoint_host = f"{garage_host}:{garage_port}"
     con = duckdb.connect()
     con.execute("INSTALL ducklake; LOAD ducklake;")
     con.execute("INSTALL postgres; LOAD postgres;")
@@ -58,7 +57,7 @@ def connect():
         f"REGION '{_env('GARAGE_S3_REGION', 'garage')}');"
     )
     bucket = _env("LAKEHOUSE_BUCKET", "lakehouse")
-    prefix = _env("DUCKLAKE_DATA_PREFIX", "data").strip("/")
+    prefix = _env("DUCKLAKE_DATA_PREFIX", "data").strip().strip("/")
     data_path = f"s3://{bucket}/{prefix}/" if prefix else f"s3://{bucket}/"
     try:
         con.execute(

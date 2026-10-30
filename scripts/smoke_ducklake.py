@@ -34,7 +34,7 @@ S3_PORT = os.getenv("GARAGE_S3_PORT", "3900")
 S3_ENDPOINT = os.getenv("GARAGE_S3_ENDPOINT", f"{S3_HOST}:{S3_PORT}")
 S3_REGION = os.getenv("GARAGE_S3_REGION", "garage")
 _BUCKET = os.getenv("LAKEHOUSE_BUCKET", "lakehouse")
-_PREFIX = os.getenv("DUCKLAKE_DATA_PREFIX", "data").strip("/")
+_PREFIX = os.getenv("DUCKLAKE_DATA_PREFIX", "data").strip().strip("/")
 DATA_PATH = f"s3://{_BUCKET}/{_PREFIX}/" if _PREFIX else f"s3://{_BUCKET}/"
 
 TABLE = "infra_smoke_test"
@@ -59,7 +59,7 @@ def main() -> int:
         CATALOG_PORT = os.getenv("CATALOG_PORT", CATALOG_PORT)
         S3_HOST = os.getenv("GARAGE_HOST", S3_HOST)
         S3_PORT = os.getenv("GARAGE_S3_PORT", S3_PORT)
-        S3_ENDPOINT = os.getenv("GARAGE_S3_ENDPOINT", f"{S3_HOST}:{S3_PORT}")
+        S3_ENDPOINT = f"{S3_HOST}:{S3_PORT}"
 
     try:
         import duckdb

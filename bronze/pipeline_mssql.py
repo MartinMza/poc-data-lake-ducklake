@@ -182,7 +182,7 @@ def build_urls() -> tuple[str, str, str, dict]:
     )
 
     bucket = _env("LAKEHOUSE_BUCKET", "lakehouse")
-    prefix = _env("DUCKLAKE_DATA_PREFIX", "data").strip("/")
+    prefix = _env("DUCKLAKE_DATA_PREFIX", "data").strip().strip("/")
     data_path = f"s3://{bucket}/{prefix}/" if prefix else f"s3://{bucket}/"
     if not data_path.endswith("/"):
         data_path += "/"
