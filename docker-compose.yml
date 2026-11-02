@@ -178,6 +178,11 @@ services:
       # se leen. Se pueden vaciar cuando el panel ya tiene los usuarios.
       AUTH_API_KEYS: ${AUTH_API_KEYS:-}
       AUTH_USERS: ${AUTH_USERS:-}
+      # CORS: esquema, hosts y puerto por separado (la aplicación deriva cors_allow_origins)
+      CORS_SCHEME: ${CORS_SCHEME:-http}
+      CORS_HOSTS: ${CORS_HOSTS:-localhost,127.0.0.1}
+      CORS_PORT: "${CORS_PORT:-8000}"
+      CORS_ALLOW_CREDENTIALS: ${CORS_ALLOW_CREDENTIALS:-false}
     depends_on:
       postgres-catalog:
         condition: service_healthy

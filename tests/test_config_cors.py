@@ -18,6 +18,9 @@ from kavos_lake.infrastructure import config
 def _clear_env(monkeypatch):
     monkeypatch.delenv("CORS_ALLOW_ORIGINS", raising=False)
     monkeypatch.delenv("CORS_ALLOW_CREDENTIALS", raising=False)
+    monkeypatch.delenv("CORS_SCHEME", raising=False)
+    monkeypatch.delenv("CORS_HOSTS", raising=False)
+    monkeypatch.delenv("CORS_PORT", raising=False)
     yield
 
 
@@ -63,3 +66,13 @@ def test_cors_wildcard_con_credenciales_desactiva_credenciales(monkeypatch):
     origins, credentials = http_api.cors_config()
     assert origins == ["*"]
     assert credentials is False  # la guarda gana
+
+
+def test_cors_toma_variables_discretas_host_puerto(monkeypatch):
+    monkeypatch.setenv("CORS_SCHEME", "http")
+    monkeypatch.setenv("CORS_HOSTS", "localhost,127.0.0.1")
+    monkeypatch.setenv("CORS_PORT", "8000")
+    monkeypatch.setenv("CORS_ALLOW_CREDENTIALS", "true")
+    origins, credentials = http_api.cors_config()
+    assert origins == ["http://localhost:8000", "http://127.0.0.1:8000"]
+    assert credentials is True

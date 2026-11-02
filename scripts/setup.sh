@@ -70,8 +70,12 @@ echo ""
 echo "==> [1/7] Verificando configuración (.env y carpeta ./mssql-backup/)..."
 mkdir -p ./mssql-backup
 if [[ ! -f .env ]]; then
-  cp .env.example .env
-  echo "    Creado .env a partir de .env.example"
+  if command -v python3 >/dev/null 2>&1 && [[ -f scripts/configure_env.py ]]; then
+    python3 scripts/configure_env.py --quick
+  else
+    cp .env.example .env
+    echo "    Creado .env a partir de .env.example"
+  fi
 else
   echo "    .env ya existe (se conserva)"
 fi

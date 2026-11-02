@@ -92,6 +92,33 @@ def test_el_modelo_no_expone_variables_combinadas():
     assert "garage_s3_endpoint" not in campos
     assert "ducklake_data_path" not in campos
     assert "auth_db_dsn" not in campos
+    assert "cors_allow_origins" not in campos
+
+
+def test_los_origenes_cors_se_derivan_de_esquema_host_y_puerto(monkeypatch):
+    monkeypatch.delenv("CORS_ALLOW_ORIGINS", raising=False)
+    monkeypatch.setenv("CORS_SCHEME", "https")
+    monkeypatch.setenv("CORS_HOSTS", "panel.empresa.com, dash.empresa.com")
+    monkeypatch.setenv("CORS_PORT", "8443")
+    settings = config.get_settings()
+    assert settings.cors_allow_origins == [
+        "https://panel.empresa.com:8443",
+        "https://dash.empresa.com:8443",
+    ]
+
+
+def test_cors_wildcard_sin_puerto(monkeypatch):
+    monkeypatch.delenv("CORS_ALLOW_ORIGINS", raising=False)
+    monkeypatch.setenv("CORS_HOSTS", "*")
+    assert config.get_settings().cors_allow_origins == ["*"]
+
+
+def test_cors_puerto_vacio_omite_puerto_en_origen(monkeypatch):
+    monkeypatch.delenv("CORS_ALLOW_ORIGINS", raising=False)
+    monkeypatch.setenv("CORS_SCHEME", "https")
+    monkeypatch.setenv("CORS_HOSTS", "app.example.com")
+    monkeypatch.setenv("CORS_PORT", "")
+    assert config.get_settings().cors_allow_origins == ["https://app.example.com"]
 
 
 def test_el_dsn_de_credenciales_se_deriva(monkeypatch):

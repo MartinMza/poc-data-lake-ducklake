@@ -55,7 +55,10 @@ Configuración (`.env` o entorno):
 | `AUTH_JWT_SECRET` | *(vacío)* | secreto HS256 (32+ bytes: `openssl rand -hex 32`) |
 | `AUTH_JWT_TTL_MINUTES` | `60` | vigencia del access token |
 | `AUTH_JWT_ISSUER` | `kavos-lake-api` | claim `iss` exigido |
-| `CORS_ALLOW_ORIGINS` | local (`http://localhost:8000`, `http://127.0.0.1:8000`) | orígenes del navegador, lista por comas o `*` |
+| `CORS_SCHEME` | `http` | esquema HTTP (`http` o `https`) |
+| `CORS_HOSTS` | `localhost,127.0.0.1` | hosts permitidos (por comas) o `*` |
+| `CORS_PORT` | `8000` | puerto del panel/frontend (vacío si no lleva puerto) |
+| `CORS_ALLOW_ORIGINS` | *(derivado)* | opcional legado/override directo (anula composición si se define) |
 | `CORS_ALLOW_CREDENTIALS` | `false` | con `*` en orígenes se ignora y queda `false` |
 | `SESSION_COOKIE_SECURE` | `false` | flag `Secure` de la cookie del panel (poné `true` con TLS) |
 | `AUTH_LOGIN_MAX_ATTEMPTS` | `5` | fallos por usuario antes del bloqueo |

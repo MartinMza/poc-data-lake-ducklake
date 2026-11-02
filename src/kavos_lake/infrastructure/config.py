@@ -66,6 +66,7 @@ class Settings(BaseSettings):
         env_file_encoding="utf-8",
         extra="ignore",
         case_sensitive=False,
+        populate_by_name=True,
     )
 
     # --- Catálogo DuckLake (Postgres) ---
@@ -108,9 +109,14 @@ class Settings(BaseSettings):
     auth_login_window_seconds: int = Field(default=300, ge=1)
     auth_login_lockout_seconds: int = Field(default=300, ge=1)
 
-    # --- CORS y panel ---
-    cors_allow_origins: Annotated[list[str], NoDecode] = Field(
-        default=list(DEFAULT_CORS_ORIGINS)
+    # --- CORS y panel (esquema, hosts y puerto por separado) ---
+    cors_scheme: Literal["http", "https"] = "http"
+    cors_hosts: Annotated[list[str], NoDecode] = Field(
+        default_factory=lambda: ["localhost", "127.0.0.1"]
+    )
+    cors_port: str = "8000"
+    cors_explicit_origins: Annotated[list[str], NoDecode] = Field(
+        default_factory=list, alias="cors_allow_origins"
     )
     cors_allow_credentials: bool = False
     session_cookie_secure: bool = False
@@ -120,7 +126,9 @@ class Settings(BaseSettings):
 
     # --- Validadores ---
 
-    @field_validator("cors_allow_origins", "auth_api_keys", mode="before")
+    @field_validator(
+        "cors_explicit_origins", "cors_hosts", "auth_api_keys", mode="before"
+    )
     @classmethod
     def _parse_csv(cls, value: Any) -> list[str]:
         return _split_csv(value)
@@ -131,6 +139,31 @@ class Settings(BaseSettings):
         return value.strip().strip("/")
 
     # --- Valores derivados (nunca entradas editables) ---
+
+    @property
+    def cors_allow_origins(self) -> list[str]:
+        """Orígenes CORS derivados de esquema, hosts y puerto (o explícitos si se pasaron)."""
+        if self.cors_explicit_origins:
+            return self.cors_explicit_origins
+        ports = _split_csv(self.cors_port) if self.cors_port else [None]
+        origins: list[str] = []
+        for host in self.cors_hosts:
+            if host == "*":
+                origins.append("*")
+                continue
+            if host.startswith("http://") or host.startswith("https://"):
+                origins.append(host)
+                continue
+            for port in ports:
+                if (
+                    not port
+                    or (self.cors_scheme == "http" and port == "80")
+                    or (self.cors_scheme == "https" and port == "443")
+                ):
+                    origins.append(f"{self.cors_scheme}://{host}")
+                else:
+                    origins.append(f"{self.cors_scheme}://{host}:{port}")
+        return origins
 
     @property
     def garage_s3_endpoint(self) -> str:

@@ -43,9 +43,20 @@ Versiones fijadas: `postgres:17.6-bookworm`, `dxflrs/garage:v2.4.1`,
 `duckdb==1.5.6` (DuckLake 1.0), `dlt==1.31.0`,
 `kavos-lake-mssql:2022-CU27`.
 
+## Configuración de Entorno (.env)
+
+Puedes configurar tu archivo `.env` de forma amigable y guiada (revisa puertos libres, genera secretos JWT seguros y te lleva de la mano):
+
+```bash
+./configure.sh                   # Asistente interactivo con menú guiado
+./configure.sh --quick           # Modo rápido automático (genera secretos aleatorios y puertos estándar)
+./configure.sh --random-secrets  # Genera o rota todas las credenciales con secretos aleatorios únicos
+./configure.sh --check           # Diagnóstico de puertos, seguridad y verificación del .env
+```
+
 ## Setup
 
-Un solo comando idempotente (crea `.env`, levanta contenedores, corre bootstrap,
+Un solo comando idempotente (configura `.env` automáticamente si no existe, levanta contenedores, corre bootstrap,
 prepara venvs, restaura el `.bak` si lo hay, ingesta y valida la API/MCP):
 
 ```bash
