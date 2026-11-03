@@ -70,13 +70,15 @@ def preview_rows(
 def run_query(sql: str, limit: int = 100) -> dict[str, Any]:
     """Ejecuta una consulta SQL analítica de solo lectura sobre el DuckLake.
 
-    Tablas disponibles (esquema `bronze`):
-    - `lake.bronze.mssql_bs_moneda`, `lake.bronze.mssql_bs_producto`,
-      `lake.bronze.mssql_bs_organizacion`
-    - `lake.bronze.mssql_bs_transaccion`, `lake.bronze.mssql_bs_operacion`
-    - `lake.bronze.mssql_d_mart_ventas`,
-      `lake.bronze.mssql_d_mart_ventas_producto_cliente`
-    - Time Travel: `SELECT * FROM lake.bronze.mssql_bs_moneda AT (VERSION => 144)`
+    No hay una lista fija de tablas: el lago se recarga en cada backup, así que
+    enumerarlas acá las dejaría desactualizadas. Descubrilas con `list_tables`
+    y sus columnas con `describe_table`; no adivines nombres de columna.
+
+    Contrato de nombres: las tablas que vienen de SQL Server se llaman
+    `mssql_<tabla>` (`dbo.BSTransaccion` -> `lake.bronze.mssql_bs_transaccion`) y
+    sus columnas están en `snake_case`.
+
+    Time Travel: `SELECT * FROM lake.bronze.mssql_bs_moneda AT (VERSION => 144)`.
 
     Guardrails:
     - Solo sentencias SELECT, WITH, DESCRIBE, SUMMARIZE, EXPLAIN.
