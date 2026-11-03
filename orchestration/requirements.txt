@@ -5,3 +5,8 @@
 # el cliente 3.8.8 opera contra él con un warning de versión (verificado:
 # flow runs quedan tracked y visibles en la API). Ver orchestration/README.md.
 prefect==3.8.8
+# Descarga reanudable del artefacto desde el link presignado (specs S2/S4).
+# Ya llega con prefect, se fija explícito para que un cambio de pin no lo mueva.
+httpx==0.28.1
+# Solo para correr orchestration/tests con el venv del componente (el flujo no lo usa).
+pytest==8.3.4
