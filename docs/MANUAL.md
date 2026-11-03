@@ -162,7 +162,9 @@ Eso es por diseño, no un olvido.
 | levantar sólo la API | `./scripts/run_api.sh --host` | valida auth antes de arrancar |
 | levantar la API en Docker | `docker compose up -d lake-api` | no usar `up -d` a secas (ver trampas) |
 | ver si hay datos | `bronze/.venv/bin/python scripts/lake_counts.py` | usa el venv de bronze |
-| correr la orquestación | `orchestration/.venv/bin/python orchestration/flow.py` | necesita `PREFECT_API_URL` y `MSSQL_BAK_PATH` |
+| correr la orquestación | `orchestration/.venv/bin/python orchestration/flow.py` | adquiere el `.bak` del correo; sin `ACQUIRE_*` usa `MSSQL_BAK_PATH` |
+| bajar el backup solo, con schedule | `orchestration/.venv/bin/python orchestration/serve.py` | cron según `ACQUIRE_POLL_HOURS` (default 4 h) |
+| podar backups viejos | `orchestration/.venv/bin/python scripts/prune_backups.py` | dry-run por defecto; `--apply` borra |
 | restaurar el `.bak` | `./scripts/restore_mssql.sh <archivo>.bak FAF12_Kavos` | idempotente, usa `REPLACE` |
 | limpiar datos sintéticos viejos | `bronze/.venv/bin/python scripts/purge_sample_data.py` | dry-run por defecto; `--apply` ejecuta |
 | generar una API key | `openssl rand -hex 24` | 24 caracteres mínimo |
@@ -194,6 +196,12 @@ Buscá tu síntoma. Si no está acá, el log del servicio suele decir la verdad:
 | 401 al loguear con password con `ñ` | el password no coincide | es correcto: credencial inválida, nunca un 500 |
 | los tests fallan por datos faltantes | stack abajo o lake vacío | pasos 1, 2 y 3 de "5 minutos" |
 | el `.bak` no aparece | está en `mssql-backup/` con otro nombre | `ls mssql-backup/` |
+| *la ventana de la firma insuficiente* | el link presignado dura 12 h (`X-Amz-Expires=43200`) | pedir un link nuevo; con `X-Amz-Expires=604800` (7 días) la falla desaparece |
+| *host fuera de la allowlist* | `ACQUIRE_LINK_HOSTS` no incluye el bucket | agregar el host exacto, nunca un comodín libre |
+| *backup descartado por antigüedad* | el artefacto no es más nuevo que el último aplicado | es correcto: mirá qué correo se está procesando |
+| *estado corrupto* en `.acquire_state.json` | JSON ilegible | revisarlo a mano; borrarlo **desactiva** la guarda de antigüedad |
+| *espacio insuficiente* | ~7,5 GB por backup sin podar | `prune_backups.py --apply` y reintentar |
+| `gdown`/WeTransfer rechazado | proveedor de link no soportado a propósito | pedir envío por S3 presignado o carpeta SharePoint |
 
 ---
 

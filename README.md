@@ -18,6 +18,8 @@ feliz, los comandos que se usan de verdad y una tabla de fallas comunes.
 ## Arquitectura
 
 ```
+Gmail (link S3 presignado) ──acquire──▶ mssql-backup/<dump>.bak.tar.gz
+                                                    │
 SQL Server (.bak) ──bak2parquet──▶ Parquet ──load_parquet──▶ bronze ──▶ API REST + MCP
                                                                │  DuckLake: catálogo en postgres-catalog + Parquet en Garage (S3)
                                                                ▼
@@ -29,6 +31,7 @@ SQL Server (.bak) ──bak2parquet──▶ Parquet ──load_parquet──▶
 |---|---|---|
 | Infra | `postgres-catalog` :5433, Garage S3 :3900–3903, `prefect-server` :4200, `mssql` :1433 | `docker-compose.yml`, `scripts/bootstrap.sh` |
 | Origen real | `.bak` de SQL Server restaurado (7 tablas del subset: `BSMoneda`, `BSProducto`, `BSOrganizacion`, `BSTransaccion`, `BSOperacion`, `DMart_Ventas`, `DMart_VentasProductoCliente`) | `mssql-backup/` (gitignored), `scripts/restore_mssql.sh` |
+| Adquisición | poller de Gmail → link S3 presignado → descarga verificada a `mssql-backup/` | `orchestration/kavos_acquire/` |
 | Ingesta bronze | `bak2parquet/` (.bak → Parquet) + `bronze/load_parquet.py` (Parquet → DuckLake, reemplazo total) | `bronze/`, `bak2parquet/` |
 | Purga de data de ejemplo | deja solo las 7 tablas reales (dry-run por defecto) | `scripts/purge_sample_data.py` |
 | Orquestación | Flow `kavos-lake-medallion`: restore condicional → ingesta MSSQL | `orchestration/` |
@@ -79,11 +82,15 @@ uv venv bronze/.venv --python 3.12
 uv pip install -p bronze/.venv/bin/python -r bronze/requirements.txt
 bronze/.venv/bin/python bronze/load_parquet.py --src parquet-out
 
-# 3. Orquestación (registra en prefect-server)
+# 3. Orquestación (registra en prefect-server). Sin ACQUIRE_* usa el .bak ya puesto; con ACQUIRE_*
+#    configurado baja el del correo y no hace falta reapuntar MSSQL_BAK_PATH.
 uv venv orchestration/.venv --python 3.12
 uv pip install -p orchestration/.venv/bin/python -r orchestration/requirements.txt
 PREFECT_API_URL=http://localhost:4200/api MSSQL_BAK_PATH="mssql-backup/<dump-del-dia>.bak" \
   orchestration/.venv/bin/python orchestration/flow.py
+
+# 3b. Con schedule (cada ACQUIRE_POLL_HOURS, default 4 h)
+orchestration/.venv/bin/python orchestration/serve.py
 
 # 4. API + MCP
 uv venv .venv --python 3.12
@@ -105,6 +112,8 @@ Operación:
 ./scripts/restore.sh <backup>              # recreate + pg_restore + re-subida + verificación
 bronze/.venv/bin/python scripts/timetravel_check.py
 bronze/.venv/bin/python scripts/lake_counts.py
+orchestration/.venv/bin/python scripts/prune_backups.py            # retención de .bak (dry-run)
+orchestration/.venv/bin/python scripts/prune_backups.py --apply    # borra el excedente
 ```
 
 ## API REST + MCP y autenticación
@@ -170,6 +179,8 @@ lineal, no materializado. Lectura clave: 50 GB nominales ≈ 5,3 GB de Parquet
 | Time travel | `AT (VERSION => N)` sobre tablas propias del checkscript |
 
 Fricciones conocidas: el catálogo DuckLake es estado compartido y exige
-`duckdb>=1.5.2` en todos los venvs; `MSSQL_BAK_PATH` debe reapuntarse al
-`.bak` del día (nombre rotado); `dbt`/silver/gold ya no forman parte del
+`duckdb>=1.5.2` en todos los venvs; con `ACQUIRE_*` configurado ya **no** hay que
+reapuntar `MSSQL_BAK_PATH` al `.bak` del día (el poller lo deja en
+`mssql-backup/` y el flow lo toma de ahí), pero los links presignados de
+Finnegans vencen a las **12 h**; `dbt`/silver/gold ya no forman parte del
 stack; Prefect server 3.6.22 vs cliente 3.8.8 solo emite un warning.

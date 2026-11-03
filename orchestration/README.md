@@ -3,23 +3,32 @@
 Flow único `kavos-lake-medallion` (`orchestration/flow.py`), lineal y de una sola
 rama, porque la única fuente de datos es SQL Server:
 
-1. **`bak-watch-restore`** — detecta un `.bak` nuevo y actualiza la marca del
-   último restore exitoso.
+1. **`acquire`** — baja el `.bak` nuevo desde Gmail (link S3 presignado) a
+   `mssql-backup/`, verificado por checksum. Rechaza un artefacto más viejo que
+   el último aplicado. Sin `ACQUIRE_*` configurado se salta en éxito.
 2. **`bak-extract`** — extrae el backup completo a Parquet con `bak2parquet`
-   (motor efímero acotado en memoria).
+   (motor efímero acotado en memoria). Toma el archivo que dejó `acquire`.
 3. **`bronze-load`** — carga ese Parquet en DuckLake Bronze (`load_parquet.py`).
 
-Fail-stop: si el restore falla, la ingesta no corre. Cada `@task` tiene
+Fail-stop: si la adquisición o la extracción fallan, la ingesta no corre; si la
+carga falla, el backup nunca se marca como aplicado. Cada `@task` tiene
 reintentos configurables y logs centralizados en Prefect.
+
+Schedule declarado (sin cron externo): `orchestration/serve.py` sirve el flow
+con un cron derivado de `ACQUIRE_POLL_HOURS` (default 4 h).
 
 ## Archivos
 
 | Archivo | Qué es |
 |---|---|
-| `flow.py` | Flow + 3 tasks (`bak-watch-restore`, `bak-extract`, `bronze-load`); entrypoint único |
-| `requirements.txt` | `prefect==3.8.8` (cliente) |
+| `flow.py` | Flow + 3 tasks (`acquire`, `bak-extract`, `bronze-load`); entrypoint |
+| `serve.py` | Sirve el flow con schedule cron (`ACQUIRE_POLL_HOURS`) |
+| `kavos_acquire/` | Adquisición: buzón, allowlist, descarga verificada, estado |
+| `tests/` | Tests del componente (sin red, sin motor): `pytest` desde acá |
+| `requirements.txt` | `prefect==3.8.8` (cliente) + `httpx` + `pytest` |
 | `.venv/` | Venv propio solo con prefect (no commitear; `uv venv`) |
 | `.last_restore.json` | Marca del último restore exitoso (path+mtime+size+DB); local, gitignored |
+| `.acquire_state.json` | UIDs y Message-IDs procesados + último backup aplicado; local, gitignored |
 
 Cada etapa corre como subproceso con el venv ya verificado de su componente
 (`bronze/.venv`); este venv solo aporta el cliente Prefect.
