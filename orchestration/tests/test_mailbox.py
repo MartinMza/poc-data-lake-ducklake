@@ -14,6 +14,8 @@ Trampas reales que estos tests fijan, y que un scraper ingenuo se come:
 
 from __future__ import annotations
 
+import re
+
 import httpx
 import pytest
 
@@ -247,3 +249,85 @@ def test_un_link_sin_host_no_filtra_la_query():
     assert candidatos[0].allowed is False
     assert "SECRETO" not in candidatos[0].reason
     assert "X-Amz" not in candidatos[0].reason
+
+
+# --- el correo real de Finnegans ---------------------------------------------
+#
+# Estructura verbatim del aviso real: `multipart/alternative` con el plain sin
+# link, el HTML con `href` entre comillas SIMPLES y `=3D`, y la URL cortada en
+# 8 puntos por quoted-printable. Token y firma van redactados: son una
+# credencial STS.
+REAL_URL = (
+    "https://finnegans-virginia-db-backup-diario.s3.us-east-1.amazonaws.com/"
+    "2026-11-01/FAF12_Kavos_2026_11_01_233302_905705.bak.tar.gz"
+    "?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Content-Sha256=UNSIGNED-PAYLOAD"
+    "&X-Amz-Credential=EXAMPLE%2F20261102%2Fus-east-1%2Fs3%2Faws4_request"
+    "&X-Amz-Date=20261102T090005Z&X-Amz-Expires=43200"
+    "&X-Amz-Security-Token=TOKEN%2BREDACTADO%3D"
+    "&X-Amz-Signature=EXAMPLE&X-Amz-SignedHeaders=host"
+    "&x-amz-checksum-mode=ENABLED&x-id=GetObject"
+)
+REAL_SENDER = "Finnegans Go <info@finnegans.com.ar>"
+REAL_SUBJECT = "Backup de Base de Datos Disponible"
+
+
+def _correo_real() -> bytes:
+    import quopri
+
+    html = (
+        "<h3>Hola</h3><h3>Ya se encuentra disponible el backup del 01/11/2026 "
+        "de la base de datos de tu empresa.</h3><div><a href='"
+        f"{REAL_URL}' target='_blank'>Descargar Backup</a></div>"
+    )
+    frontera = "f4e8f40b16e24d43fc97629a88b95919202c8974868c48a5563ae909918e"
+    return (
+        f"Subject: {REAL_SUBJECT}\r\n"
+        f"Message-ID: <010001a19b7cba7f@email.amazonses.com>\r\n"
+        f"From: {REAL_SENDER}\r\n"
+        f"Mime-Version: 1.0\r\n"
+        f"Content-Type: multipart/alternative; boundary={frontera}\r\n"
+        f"\r\n"
+        f"--{frontera}\r\n"
+        f"Content-Transfer-Encoding: quoted-printable\r\n"
+        f"Content-Type: text/plain; charset=UTF-8\r\n"
+        f"\r\n"
+        f"{REAL_SUBJECT}\r\n"
+        f"--{frontera}\r\n"
+        f"Content-Transfer-Encoding: quoted-printable\r\n"
+        f"Content-Type: text/html; charset=UTF-8\r\n"
+        f"\r\n"
+    ).encode() + quopri.encodestring(html.encode()) + f"\r\n--{frontera}--\r\n".encode()
+
+
+def test_el_correo_real_de_finnegans_se_parsea_completo():
+    # El plain no trae link; el HTML lo trae entre comillas simples y cortado
+    # por quoted-printable. Si esto falla, el poller no ve ningún backup.
+    parsed = parse_message(_correo_real())
+
+    assert parsed.sender == "info@finnegans.com.ar"
+    assert parsed.subject == REAL_SUBJECT
+    assert parsed.message_id == "<010001a19b7cba7f@email.amazonses.com>"
+    assert parsed.links == [REAL_URL], "la URL tiene que salir entera, sin cortes"
+
+
+def test_el_correo_real_entra_por_el_filtro_configurado():
+    parsed = parse_message(_correo_real())
+
+    assert sender_matches(parsed.sender, "info@finnegans.com.ar")
+    assert subject_matches(parsed.subject, REAL_SUBJECT)
+
+
+def test_los_defaults_de_codigo_casan_con_el_correo_real():
+    """El default del código tiene que matchear el aviso real, no una idea.
+
+    Este test existe porque los únicos valores que había para remitente y
+    asunto no matcheaban el correo real (`backup@finnegans.com` y "Backup
+    diario"), así que el poller no habría visto ningún backup nunca. Se compara
+    contra el correo real, no contra una copia de las constantes.
+    """
+    from kavos_acquire.defaults import FINNEGANS_SENDER, FINNEGANS_SUBJECT_PATTERN
+
+    parsed = parse_message(_correo_real())
+
+    assert sender_matches(parsed.sender, FINNEGANS_SENDER)
+    assert subject_matches(parsed.subject, FINNEGANS_SUBJECT_PATTERN)

@@ -17,6 +17,13 @@ reintentos configurables y logs centralizados en Prefect.
 Schedule declarado (sin cron externo): `orchestration/serve.py` sirve el flow
 con un cron derivado de `ACQUIRE_POLL_HOURS` (default 4 h).
 
+El aviso real de Finnegans llega por Amazon SES desde
+`info@finnegans.com.ar` con asunto `Backup de Base de Datos Disponible`. Esos
+dos valores son defaults en `kavos_acquire/defaults.py` —no hace falta
+configurarlos— y `tests/test_mailbox.py` los fija contra el correo real. El
+`text/plain` del aviso no trae el link: sólo el `text/html`, con el `href` entre
+comillas simples y la URL cortada en 8 puntos por quoted-printable.
+
 ## Archivos
 
 | Archivo | Qué es |

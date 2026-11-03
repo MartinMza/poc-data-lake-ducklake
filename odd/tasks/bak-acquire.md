@@ -263,3 +263,33 @@ de mantenimiento sobre el entorno del operador, no sobre el proyecto.
 Consecuencia: el candidato **no** fue revisado por el review nativo. Lo que sí
 existe como verificación es la suite de 100 tests, el check funcional del flow y
 la verificación independiente de `gentle-ai-verify` (L7).
+
+### L9 — Evidencia: el correo real (estructura verificada)
+
+El operador aportó el aviso real completo. Hechos que fijaron el diseño:
+
+- `From: Finnegans Go <info@finnegans.com.ar>` — dominio `.com.ar`.
+- `Subject: Backup de Base de Datos Disponible`.
+- Envío por Amazon SES en nombre de Finnegans (`Return-Path: …@info.finnegans.com.ar`).
+- `multipart/alternative`: el `text/plain` **no** trae el link; sólo el
+  `text/html`, con `<a href='…'>` entre comillas **simples** y la URL cortada en
+  **8 puntos** por quoted-printable (`=3D` para los `=`).
+- Casilla destino `mail.drive.mm@gmail.com`. No se commitea: es un dato del
+  operador, va en su `.env`.
+
+**Defecto encontrado y corregido**: los únicos valores de remitente y asunto que
+existían (`backup@finnegans.com`, "Backup diario") no matcheaban el aviso real,
+así que el poller nunca habría descargado nada — y el fallo habría sido
+silencioso (corrida exitosa, cero backups nuevos). Los valores del proveedor
+ahora viven en `kavos_acquire/defaults.py`, con override por
+`ACQUIRE_FROM`/`ACQUIRE_SUBJECT_PATTERN`, y `tests/test_mailbox.py` los compara
+contra el correo real.
+
+Nota: `.env.example` quedó con los valores viejos porque el harness bloquea la
+escritura en ese path por ser sensible. Los dos valores correctos están en
+`defaults.py`, que es el que manda cuando la variable no está definida; conviene
+alinear el ejemplo a mano.
+
+Verificación del parser contra el aviso real (fixture redactado, token y firma
+reemplazados): `sender='info@finnegans.com.ar'`, 1 link de 450 caracteres
+intacto pese a los 8 cortes.

@@ -59,6 +59,7 @@ from pathlib import Path
 
 from prefect import flow, get_run_logger, task
 
+from kavos_acquire.defaults import FINNEGANS_SENDER, FINNEGANS_SUBJECT_PATTERN
 from kavos_acquire.download import DEFAULT_MIN_WINDOW_SECONDS
 from kavos_acquire.pipeline import (
     STATUS_ACQUIRED,
@@ -217,8 +218,14 @@ def acquire() -> AcquireOutcome:
         final_dir=os.getenv("ACQUIRE_FINAL_DIR", ACQUIRE_FINAL_DEFAULT),
         imap_user=imap_user,
         imap_password=os.getenv("ACQUIRE_IMAP_APP_PASSWORD", ""),
-        sender=os.getenv("ACQUIRE_FROM", ""),
-        subject_pattern=os.getenv("ACQUIRE_SUBJECT_PATTERN", ""),
+        # Defaults del proveedor en código: el caso normal funciona sin
+        # configurar nada, y `tests/test_mailbox.py` los fija contra el correo
+        # real. El entorno sigue mandando cuando define la variable.
+        sender=os.getenv("ACQUIRE_FROM", "").strip() or FINNEGANS_SENDER,
+        subject_pattern=(
+            os.getenv("ACQUIRE_SUBJECT_PATTERN", "").strip()
+            or FINNEGANS_SUBJECT_PATTERN
+        ),
         link_hosts=link_hosts,
         min_window_seconds=int(os.getenv(
             "ACQUIRE_MIN_WINDOW_SECONDS", str(DEFAULT_MIN_WINDOW_SECONDS))),

@@ -198,6 +198,7 @@ Buscá tu síntoma. Si no está acá, el log del servicio suele decir la verdad:
 | el `.bak` no aparece | está en `mssql-backup/` con otro nombre | `ls mssql-backup/` |
 | *la ventana de la firma insuficiente* | el link presignado dura 12 h (`X-Amz-Expires=43200`) | pedir un link nuevo; con `X-Amz-Expires=604800` (7 días) la falla desaparece |
 | *host fuera de la allowlist* | `ACQUIRE_LINK_HOSTS` no incluye el bucket | agregar el host exacto, nunca un comodín libre |
+| el poller no encuentra nunca el correo | remitente o asunto no coinciden | el aviso real es de `info@finnegans.com.ar` con asunto `Backup de Base de Datos Disponible`; son los defaults de `kavos_acquire/defaults.py` |
 | *backup descartado por antigüedad* | el artefacto no es más nuevo que el último aplicado | es correcto: mirá qué correo se está procesando |
 | *estado corrupto* en `.acquire_state.json` | JSON ilegible | revisarlo a mano; borrarlo **desactiva** la guarda de antigüedad |
 | *espacio insuficiente* | ~7,5 GB por backup sin podar | `prune_backups.py --apply` y reintentar |
