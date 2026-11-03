@@ -51,7 +51,7 @@ def test_restore_deja_la_base_online_en_motor_real():
 
     Corre contra una instancia existente (modo `url`): necesita
     `MSSQL_SA_PASSWORD` y que el motor vea el .bak en
-    `BAK2PARQUET_IT_BAK_PATH` (default: la ruta del contenedor dulse-mssql).
+    `BAK2PARQUET_IT_BAK_PATH` (default: la ruta del contenedor del motor (kavos-lake-mssql)).
     Sin password se omite, igual que el resto del módulo sin BAK2PARQUET_IT.
     """
     import pytest as _pytest
