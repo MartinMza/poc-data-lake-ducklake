@@ -265,19 +265,24 @@ if [[ -n "$SELECTED_BAK" ]] && docker compose ps --status running --services | g
     echo "    -> Base [$TARGET_DB] ya está restaurada y ONLINE en SQL Server (usa --force-restore para re-restaurar)."
   fi
 
-  # Configurar tablas por defecto según la base si MSSQL_TABLES no fue definida
   export MSSQL_DATABASE="$TARGET_DB"
-  if [[ -z "${MSSQL_TABLES:-}" && "$TARGET_DB" == "FAF12_Kavos" ]]; then
-    export MSSQL_TABLES="BSMoneda:MonedaID:merge,BSProducto:ProductoID:merge,BSOrganizacion:OrganizacionID:merge,BSTransaccion:TransaccionID:merge,BSOperacion:TransaccionID:merge,DMart_Ventas::replace,DMart_VentasProductoCliente::replace"
-    export MSSQL_PIPELINE_NAME="${MSSQL_PIPELINE_NAME:-bronze_mssql_faf12}"
-  fi
 
-  echo "    -> Ingestando datos desde MSSQL [$TARGET_DB] hacia DuckLake (esquema bronze)..."
-  if [[ -x "$HOME/.local/mssql-odbc/bin/bcp" ]] || command -v bcp >/dev/null 2>&1; then
-    PATH="$HOME/.local/mssql-odbc/bin:$PATH" bronze/.venv/bin/python bronze/fast_mssql.py all
-  else
-    bronze/.venv/bin/python bronze/pipeline_mssql.py
+  echo "    -> Extrayendo [$TARGET_DB] a Parquet (extractor efímero; sin bcp ni dlt)..."
+  export PYTHONPATH="$PWD/bak2parquet/src${PYTHONPATH:+:$PYTHONPATH}"
+  if ! bronze/.venv/bin/python -c "import bak2parquet, arrow_odbc" 2>/dev/null; then
+    bronze/.venv/bin/pip install -q -r bak2parquet/requirements.txt
   fi
+  # El password viaja por env (MSSQL_SA_PASSWORD), nunca en la línea de comandos.
+  bronze/.venv/bin/python -m bak2parquet --engine url \
+    --bak "./mssql-backup/$BAK_BASENAME" \
+    --bak-path "/var/opt/mssql/backup/$BAK_BASENAME" \
+    --mssql-host "${MSSQL_HOST:-localhost}" \
+    --mssql-port "${MSSQL_PORT:-1433}" \
+    --mssql-user "${MSSQL_USER:-sa}" \
+    --out bak2parquet/out
+
+  echo "    -> Cargando Parquet en DuckLake (esquema bronze)..."
+  bronze/.venv/bin/python bronze/load_parquet.py --src bak2parquet/out
 else
   echo "    -> Sin archivos .bak en ./mssql-backup/ (coloca un .bak allí para restaurar e ingerir MSSQL)."
 fi

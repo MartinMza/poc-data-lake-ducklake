@@ -1,9 +1,8 @@
-# bronze — deps fijadas. La única fuente es SQL Server (fast path + dlt fallback).
-# dlt 1.31.0 = destino nativo `ducklake` (desde 1.17.0).
+# bronze — deps fijadas. La única fuente es el Parquet del extractor
+# (`bak2parquet/`): este cargador solo lee Parquet con DuckDB hacia DuckLake.
 # duckdb 1.5.6 = DuckLake 1.0 exige DuckDB >=1.5.2.
-dlt[ducklake,s3,sql-database]==1.31.0
+# pyarrow 21.0.0 = versión ya usada en el repo (paquete del extractor).
 duckdb==1.5.6
-sqlalchemy==2.1.4
-# Driver MSSQL (pyodbc + ODBC Driver 18 user-space en ~/.local/mssql-odbc;
-# ver pipeline_mssql.py). bcp lo provee mssql-tools del contenedor/host.
-pyodbc==5.3.0
+pyarrow==21.0.0
+# s3fs lo usa scripts/s3_sync.py; antes llegaba de forma implícita vía dlt[s3].
+s3fs>=2024.6.0

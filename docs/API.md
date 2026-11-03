@@ -142,9 +142,9 @@ curl -s -X POST "http://localhost:8000/api/v1/query" \
   -d '{"sql":"SELECT COUNT(*) AS n FROM lake.bronze.mssql_bs_transaccion","limit":10}'
 ```
 
-> Nota: el fast path de ingesta (`bronze/fast_mssql.py`) normaliza los nombres
-> de columna a `snake_case` (`transaccion_id`, `importe_total`, …), por eso la
-> API y el MCP los exponen así.
+> Nota: el cargador de Bronze (`bronze/load_parquet.py`) normaliza los nombres
+> de columna a `snake_case` (`transaccion_id`, `importe_total`, …) y las tablas
+> a `mssql_<tabla>`, por eso la API y el MCP los exponen así.
 
 ---
 

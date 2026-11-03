@@ -1,45 +1,33 @@
-# Ingesta bronze — SQL Server → DuckLake
+# Carga Bronze — Parquet → DuckLake
 
-La única fuente de datos del lago es SQL Server: el `.bak` real (`FAF12_Kavos`)
-restaurado en el contenedor `mssql`. El origen Postgres sintético, sus tablas y
-las capas dbt (`silver`/`gold`) fueron retirados.
+La única fuente de datos del lago es SQL Server vía backup `.bak`. El camino
+de datos tiene dos pasos y un solo destino (esquema `bronze` del mismo
+DuckLake: mismo catálogo Postgres y mismo `DATA_PATH` S3 vía Garage):
 
-Dos caminos de ingesta, mismo destino (esquema `bronze` del mismo DuckLake:
-mismo catálogo Postgres y mismo `DATA_PATH` S3 vía Garage):
-
-| Camino | Archivo | Rol |
-|---|---|---|
-| Fast path (bcp → staging → MERGE) | `fast_mssql.py` | **principal** (2026-10-16, speedup 5,4x con paridad total) |
-| dlt (`sql_database` + pyodbc) | `pipeline_mssql.py` | fallback / rollback (re-correr converge por merge) |
+1. **Extracción** (`bak2parquet/`, paquete aparte): restaura el `.bak` en una
+   base temporal, vuelca cada tabla a `<out>/<esquema>/<tabla>.parquet`
+   (compresión ZSTD) y elimina la base al terminar.
+2. **Carga** (`bronze/load_parquet.py`, este directorio): lee ese árbol con
+   `read_parquet` de DuckDB y reemplaza cada tabla entera en `bronze`
+   (idempotente: cada backup se extrae completo, así que no hay allowlist ni
+   modos por tabla).
 
 ## Versiones
 
-- `dlt[ducklake,s3,sql-database]==1.31.0` (destino nativo `ducklake` desde 1.17.0)
-- `duckdb==1.5.6` (DuckLake 1.0 exige ≥1.5.2)
-- `sqlalchemy==2.1.4`, `pyodbc==5.3.0` + Microsoft ODBC Driver 18 en user-space
-  (`~/.local/mssql-odbc`, sin root; `pipeline_mssql.py` precarga
-  `libodbc.so.2`/`libodbcinst.so.2` y fija `ODBCSYSINI`).
-- `bcp`/`sqlcmd` vienen de mssql-tools (host: `~/.local/mssql-odbc/bin`, contenedor: `/opt/mssql-tools18/bin`).
+- `duckdb==1.5.6` (DuckLake 1.0 exige DuckDB ≥1.5.2)
+- `pyarrow==21.0.0` (versión ya usada en el repo, paquete del extractor)
 
 ## Configuración (env, mismos defaults que compose/`.env.example`)
 
+El cargador solo necesita el lago (el origen lo resolvió el extractor):
+
 | Var | Default | Nota |
 |---|---|---|
-| `MSSQL_HOST` / `MSSQL_PORT` | `localhost` / `1433` | contenedor `mssql` |
-| `MSSQL_DATABASE` | `FAF12_Kavos` | DB restaurada del `.bak` real |
-| `MSSQL_USER` / `MSSQL_PASSWORD` | `sa` / `MSSQL_SA_PASSWORD` | credenciales del PoC local |
-| `MSSQL_TABLES` | las 7 tablas reales (`DEFAULT_MSSQL_TABLES`) | `Tabla:pk:estrategia,...` |
-| `MSSQL_PIPELINE_NAME` | `bronze_mssql_ingestion` | estado/cursor dlt separado |
 | `CATALOG_*` | `ducklake:ducklake@localhost:5433/ducklake_catalog` | catálogo (`catalog` sin sufijo driver) |
 | `GARAGE_S3_*`, `DUCKLAKE_DATA_PATH` | endpoint `http://localhost:3900`, `s3://lakehouse/data/` | storage del lake |
-| `FAST_MSSQL_PARALLEL` | nCPUs | export bcp concurrente |
-| `FAST_MSSQL_WINDOW_DAYS` | `15` | ventana incremental de `BSTransaccion` |
-| `FAST_MSSQL_WORKDIR` | `mssql-fast/` | TSVs transitorios (gitignored) |
 
-Estrategias: `merge` (upsert por PK, default cuando hay PK), `replace` (sin PK,
-caso `DMart_*`), `incremental` (cursor `updated_at`; ninguna de las 7 reales lo
-usa). El esquema real no tiene `rowversion` ni `updated_at` fiable, por eso el
-default es full-extract + merge/replace.
+Conexión vía `scripts/lake_counts.connect()` (SECRET S3 + ATTACH canónicos,
+mismo `DATA_PATH` que el resto del repo).
 
 ## Uso
 
@@ -47,54 +35,53 @@ default es full-extract + merge/replace.
 uv venv bronze/.venv --python 3.12
 uv pip install -p bronze/.venv/bin/python -r bronze/requirements.txt
 
-# Diario (fast path): BSTransaccion por ventana, resto full
-bronze/.venv/bin/python bronze/fast_mssql.py all
+# 1. Extraer el .bak a Parquet (restaura temporal en el motor existente y limpia)
+PYTHONPATH=bak2parquet/src bronze/.venv/bin/python -m bak2parquet --engine url \
+  --bak mssql-backup/<dump-del-dia>.bak --out parquet-out
 
-# Carga completa y resync semanal
-bronze/.venv/bin/python bronze/fast_mssql.py all --full
-bronze/.venv/bin/python bronze/fast_mssql.py all --tables BSTransaccion --resync
-
-# Paridad fast vs ground truth
-bronze/.venv/bin/python bronze/fast_mssql.py parity --ref bronze/fast_ground_truth.json
-
-# Fallback dlt (mismas tablas, converge por merge)
-bronze/.venv/bin/python bronze/pipeline_mssql.py [--full-refresh] [--tables BSMoneda]
+# 2. Cargar el Parquet en Bronze (reemplazo total por tabla)
+bronze/.venv/bin/python bronze/load_parquet.py --src parquet-out
+bronze/.venv/bin/python bronze/load_parquet.py --src parquet-out --report-json parquet-out/bronze-load-report.json
 ```
+
+Salida por tabla (`load bronze.mssql_bs_moneda: 17 filas (0.4s)`) y un total
+final. Con `--report-json` además escribe el resumen (filas, segundos y
+origen por tabla). Exit 0 solo si todas las tablas cargaron; si alguna falla,
+la lista en stderr y sale 1 (re-correr converge: lo ya cargado queda igual).
+
+## Nombres y tipos
+
+- Destino: `bronze.mssql_<tabla>` en `snake_case` (`dbo.BSTransaccion` ->
+  `mssql_bs_transaccion`; esquemas no-`dbo` agregan su esquema). Mismo contrato
+  de nombres que la ingesta anterior: la API y el MCP exponen `mssql_*`.
+- Columnas: se normalizan a `snake_case` (`TransaccionID` ->
+  `transaccion_id`). Si dos columnas colisionan al normalizar, la tabla se
+  aborta con el detalle en vez de pisarse en silencio.
+- Tipos: los que trae el Parquet del extractor (numéricos exactos, fechas con
+  precisión, booleanos, textos, nulos). Tablas vacías generan Parquet válido
+  con esquema y cargan 0 filas.
 
 ## Data cargada (subset real, 2026-10-15)
 
-| Origen (`dbo`) | Filas | PK | Estrategia | Bronze |
-|---|---|---|---|---|
-| `BSMoneda` | 17 | `MonedaID` | merge | `mssql_bs_moneda` |
-| `BSProducto` | 9 342 | `ProductoID` | merge | `mssql_bs_producto` |
-| `BSOrganizacion` | 3 055 | `OrganizacionID` | merge | `mssql_bs_organizacion` |
-| `BSTransaccion` | 320 447 | `TransaccionID` | merge | `mssql_bs_transaccion` |
-| `BSOperacion` | 148 356 | `TransaccionID` | merge | `mssql_bs_operacion` |
-| `DMart_Ventas` | 275 | — | replace | `mssql_d_mart_ventas` |
-| `DMart_VentasProductoCliente` | 4 065 | — | replace | `mssql_d_mart_ventas_producto_cliente` |
+| Origen (`dbo`) | Filas | Bronze |
+|---|---|---|
+| `BSMoneda` | 17 | `mssql_bs_moneda` |
+| `BSProducto` | 9 342 | `mssql_bs_producto` |
+| `BSOrganizacion` | 3 055 | `mssql_bs_organizacion` |
+| `BSTransaccion` | 320 447 | `mssql_bs_transaccion` |
+| `BSOperacion` | 148 356 | `mssql_bs_operacion` |
+| `DMart_Ventas` | 275 | `mssql_d_mart_ventas` |
+| `DMart_VentasProductoCliente` | 4 065 | `mssql_d_mart_ventas_producto_cliente` |
 
-Total 485 557 filas, convergen sin duplicados en re-corridas. Paridad fast vs
-dlt verificada (`bronze/fast_ground_truth.json`: conteos y sumas al centavo).
-
-## Mapeo de tipos observado (sin pérdida)
-
-`MONEY→DECIMAL(38,9)` (sumas exactas), `DATETIME/DATETIME2→TIMESTAMP` (ms
-preservados), `BIT→BOOLEAN`, `VARCHAR/NVARCHAR→VARCHAR` (unicode intacto),
-`INT/BIGINT/SMALLINT`, `NUMERIC`, `DATE`, `TEXT→VARCHAR`. Tipos fuera del
-mapeo (`IMAGE`, `XML`, `GEOGRAPHY`) abortan en `check_source_types` hasta
-ampliarlo caso por caso.
-
-**Nombres de columna**: el fast path normaliza a `snake_case` (`transaccion_id`,
-`importe_total`); el camino dlt conserva el nombre original del origen. La API
-y el MCP exponen lo que haya en el lago (hoy `snake_case`).
+Total 485 557 filas, convergen sin duplicados en re-corridas.
 
 ## Gotchas
 
-1. `--full-refresh` / `replace` reescriben la tabla: hay una ventana breve sin
-   datos visible para consumidores. Para servir, usar snapshots/backup.
+1. El reemplazo total reescribe la tabla: hay una ventana breve sin datos
+   visible para consumidores. Para servir, usar snapshots/backup.
 2. Las tablas de prueba (`mssql_productos`, `mssql_ventas`, `mssql_movimientos`)
    y la DB `RestoredProof` fueron eliminadas con `scripts/purge_sample_data.py`
    y `DROP DATABASE`. No hay default que apunte a ellas.
-3. `TrustServerCertificate=yes` es solo-PoC-local (cert autofirmado).
-4. No hay `requirements` para bcp: si falta `bcp`, el fast path falla y
-   corresponde el fallback dlt (`FAST_MSSQL_MODE=dlt`).
+3. Si la extracción falla (backup corrupto o versión incompatible), el
+   extractor aborta con el motivo del motor en stderr y el cargador no
+   corre: ese backup no deja Bronze a medio escribir.
