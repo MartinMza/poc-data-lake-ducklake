@@ -229,3 +229,37 @@ que fallar cerrado con un mensaje accionable que pida S3 o SharePoint.
 
 Ver S1. "todos los dias" y "una o dos veces por semana" son incompatibles; se
 implementa la lectura más estricta (cada 4 h).
+
+### L7 — Verificación independiente: dos hallazgos reales, corregidos
+
+`gentle-ai-verify` sobre `feat/bak2parquet..feat/bak-acquire`. Items 1 y 2
+(riesgo alto) PASS. Dos fallas en el detalle, ambas reproducidas y corregidas
+en `0825bad` con test de regresión:
+
+1. **El camino 416 publicaba sin verificar.** `esperado = _total_from_headers(...)
+   or ya_descargado` hacía que un 416 sin `Content-Range` ni checksum tomara el
+   tamaño actual como esperado: la verificación de tamaño quedaba vacua y un
+   `.part` de 13 bytes de basura se publicaba en `mssql-backup/`. S3 real manda
+   `Content-Range` en un 416; OneDrive y Drive comparten `download()` y no.
+   Ahora falla cerrado.
+2. **Fuga de la query en los mensajes.** `mailbox._reason_for` interpolaba la
+   URL completa cuando no había host, y esa query lleva `X-Amz-Security-Token`.
+   El texto llegaba al log de Prefect vía `AcquisitionFailed`. Ahora pasa por
+   `sanitize_url`.
+
+Evidencia del estado final: `100 passed` y flow completo en `Completed`.
+
+### L8 — Review nativo bloqueado por assets desactualizados
+
+`gentle_review assess` → `reviewDue: true`, `nativeRisk: high`, candidato
+`base-diff` contra `feat/bak2parquet` (28 paths, 3513 líneas), `consumed: false`.
+
+`gentle_review inspect` → `status: blocked`, `reason_code: managed_assets_outdated`.
+La continuación impone `gentle-ai sync --agent pi`, que reescribe assets
+gestionados en la instalación de Pi (`~/.pi/agent/npm/node_modules/gentle-pi/`),
+fuera del repositorio. No se ejecuta sin autorización explícita: es una acción
+de mantenimiento sobre el entorno del operador, no sobre el proyecto.
+
+Consecuencia: el candidato **no** fue revisado por el review nativo. Lo que sí
+existe como verificación es la suite de 100 tests, el check funcional del flow y
+la verificación independiente de `gentle-ai-verify` (L7).
