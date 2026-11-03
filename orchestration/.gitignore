@@ -2,3 +2,6 @@
 __pycache__/
 # Marca local del último restore exitoso (spec bak-watch-restore).
 .last_restore.json
+# Estado del poller de adquisición (Message-IDs, UIDs, último backup aplicado).
+.acquire_state.json
+.acquire_state.json.tmp
