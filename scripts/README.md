@@ -43,6 +43,20 @@ Actualizar: cambiar el tag en `docker-compose.yml` (o el pin en
 bootstrap + smoke. Sin lockfiles adicionales en este slice: las imágenes
 son el único artefacto versionado del stack.
 
+## Retención de backups (`mssql-backup/`)
+
+```bash
+orchestration/.venv/bin/python scripts/prune_backups.py                 # dry-run, conserva los 2 más nuevos
+orchestration/.venv/bin/python scripts/prune_backups.py --keep 3        # dry-run conservando 3
+orchestration/.venv/bin/python scripts/prune_backups.py --apply         # borra el excedente
+PRUNE_DIR=/otra/ruta orchestration/.venv/bin/python scripts/prune_backups.py --apply
+```
+
+Conserva los N backups más nuevos **por la fecha del nombre** (nunca por
+mtime), ignora lo que no parsea como backup y nunca baja a
+`mssql-backup/.incoming/` (`.part` en vuelo). Dry-run por defecto: sin
+`--apply` solo muestra el plan.
+
 ## Notas de diseño
 
 - Garage en nodo único con `replication_factor = 1` (ver `docker/garage.toml`);
