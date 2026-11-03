@@ -21,6 +21,10 @@ mssql-backup/
 mssql-fast/
 *.tsv
 
+# bak2parquet: salidas de corrida (parquets y reportes locales, se regeneran).
+bak2parquet/out/
+bak2parquet/report.json
+
 # Agentes de IA y asistentes
 .agent/
 .agents/

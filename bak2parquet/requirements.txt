@@ -1,0 +1,9 @@
+# bak2parquet — dependencias fijadas.
+# Transferencia estrictamente columnar: arrow-odbc + pyarrow.
+# pyodbc SOLO para control (RESTORE, DBCC, catálogo); nunca transfiere filas.
+# PROHIBIDO: pandas, sqlalchemy, objetos Python por fila.
+pyarrow==21.0.0
+arrow-odbc==10.6.3
+pyodbc==5.3.0
+# Solo para correr bak2parquet/tests con el venv del componente (el paquete no lo usa).
+pytest==8.3.4
