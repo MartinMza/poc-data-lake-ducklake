@@ -228,3 +228,22 @@ def test_scan_devuelve_el_link_permitido():
     assert candidato.allowed is True
     assert candidato.url == URL
     assert candidato.message_id == "<CAB-1@finnegans.com>"
+
+
+def test_un_link_sin_host_no_filtra_la_query():
+    """Regresión (hallazgo de verificación): S5 también aplica en los mensajes.
+
+    Con host ausente, `_reason_for` interpolaba la URL completa y la query lleva
+    `X-Amz-Security-Token`. Ese texto termina en el log de Prefect vía
+    `AcquisitionFailed`.
+    """
+    imap = FakeImap(
+        {1: _raw_message("mirá https:///p?X-Amz-Security-Token=SECRETO")}
+    )
+
+    candidatos = scan_mailbox(imap, since_uid=0, **CONFIG)
+
+    assert len(candidatos) == 1
+    assert candidatos[0].allowed is False
+    assert "SECRETO" not in candidatos[0].reason
+    assert "X-Amz" not in candidatos[0].reason

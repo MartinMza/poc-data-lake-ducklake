@@ -139,14 +139,40 @@ error**. Esta es la guarda que separa automatizar de automatizar mal.
 
 | ID | Specs | Qué | Ruta | Commit |
 |---|---|---|---|---|
-| T1 | S3 | Identidad del backup: parseo del nombre + guarda de monotonicidad | `orchestration/kavos_acquire/identity.py` | |
-| T2 | S5 | Estado persistido: JSON atómico, Message-IDs, timestamps aplicados | `orchestration/kavos_acquire/state.py` | |
-| T3 | S2,S4,S8 | Descarga reanudable, checksum, guarda de ventana y de disco, commit atómico | `orchestration/kavos_acquire/download.py` | |
-| T4 | S6 | Poller IMAP de Gmail: filtro por remitente/asunto, extracción de links, allowlist | `orchestration/kavos_acquire/mailbox.py` | |
-| T5 | — | Resolver pluggable por host (directo/S3, OneDrive, Drive) | `orchestration/kavos_acquire/resolvers.py` | |
-| T6 | S7 | Tarea `acquire` en el flow + forma de correrlo con schedule | `orchestration/flow.py`, `orchestration/serve.py` | |
-| T7 | S8 | Poda de backups reteniendo N | `scripts/prune_backups.py` | |
-| T8 | S1,S2,S9 | Documentación y variables de entorno | `docs/MANUAL.md`, `README.md`, `.env.example`, `orchestration/README.md` | |
+| T1 | S3 | Identidad del backup: parseo del nombre + guarda de monotonicidad | `orchestration/kavos_acquire/identity.py` | `ce4ef90` |
+| T2 | S5 | Estado persistido: JSON atómico, Message-IDs, timestamps aplicados | `orchestration/kavos_acquire/state.py` | `4fbbc45` |
+| T3 | S2,S4,S8 | Descarga reanudable, checksum, guarda de ventana y de disco, commit atómico | `orchestration/kavos_acquire/download.py` | `fa326ee` |
+| T4 | S6 | Poller IMAP de Gmail: filtro por remitente/asunto, extracción de links, allowlist | `orchestration/kavos_acquire/mailbox.py` | `d53aed4` |
+| T5 | — | Resolver pluggable por host (directo/S3, OneDrive, Drive) | `orchestration/kavos_acquire/resolvers.py` | `dc7a8ba` |
+| T6 | S7 | Tarea `acquire` en el flow + forma de correrlo con schedule | `orchestration/flow.py`, `orchestration/serve.py` | `c9233a6`, `ea9c816` |
+| T7 | S8 | Poda de backups reteniendo N | `scripts/prune_backups.py` | `87a27cd` |
+| T8 | S1,S2,S9 | Documentación y variables de entorno | `docs/MANUAL.md`, `README.md`, `.env.example` | `5ff909d` |
+
+### Límite de slice (importante para el review)
+
+La rama `feat/bak-acquire` sale de **`feat/bak2parquet`**, no de `main`.
+Contar el diff contra `main` da ~25 000 líneas y ~61 commits, que son casi
+todos trabajo previo ajeno a esta feature. El review de esta entrega se mide
+contra su base real:
+
+```
+git diff --shortstat feat/bak2parquet..feat/bak-acquire
+git log --oneline feat/bak2parquet..feat/bak-acquire
+```
+
+Los slices de commit son, en orden: spec (`eb383fc`), andamiaje (`1fa9d11`),
+identidad (`ce4ef90`), estado (`4fbbc45`), descarga (`fa326ee`), buzón
+(`d53aed4`), resolvers (`dc7a8ba`), orquestador (`c9233a6`), flow+schedule
+(`ea9c816`), poda (`87a27cd`), docs (`5ff909d`). Cada uno es revisable solo.
+
+### Verificación ejecutada
+
+| Qué | Comando | Resultado |
+|---|---|---|
+| Suite del componente | `orchestration/.venv/bin/python -m pytest orchestration/tests/` | `98 passed` |
+| Flow completo sin mutar el lago | `MSSQL_BAK_PATH= BRONZE_PYTHON=/bin/true orchestration/.venv/bin/python orchestration/flow.py` | `flow kavos-lake-medallion: Completed` (3 tasks, `AcquireOutcome` atraviesa Prefect) |
+| Poda sobre el directorio real | `orchestration/.venv/bin/python scripts/prune_backups.py` (dry-run) | conserva el `.bak` real, ignora los 2 fixtures sin fecha |
+
 
 ## Log
 

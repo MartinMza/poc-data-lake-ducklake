@@ -276,8 +276,18 @@ def download(
                 logger.info(
                     "%s: el .part ya está completo (HTTP 416), se verifica", filename
                 )
-                esperado = _total_from_headers(resp.headers) or ya_descargado
+                esperado = _total_from_headers(resp.headers)
                 checksum_crc32 = resp.headers.get("x-amz-checksum-crc32")
+                if esperado is None and not checksum_crc32:
+                    # Un 416 pelado no prueba NADA sobre los bytes del `.part`.
+                    # Asumir `ya_descargado` como tamaño esperado volvía la
+                    # verificación vacua y publicaba basura. S3 real manda
+                    # `Content-Range`; otros hosts no.
+                    raise DownloadError(
+                        f"{filename}: el origen respondió 416 sin tamaño total ni "
+                        f"checksum, así que no hay forma de verificar el .part. "
+                        f"No se publica sin verificar."
+                    )
             else:
                 reanudando = ya_descargado > 0 and resp.status_code == 206
                 if ya_descargado and not reanudando:

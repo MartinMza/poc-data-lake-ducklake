@@ -348,3 +348,33 @@ def test_un_404_es_error_de_descarga(tmp_path):
             client=_client(handler),
             now=parse_presign_window(PRESIGNED).signed_at,
         )
+
+
+def test_416_sin_total_ni_checksum_no_publica_el_part(tmp_path):
+    """Regresión (hallazgo de verificación): un 416 pelado publicaba basura.
+
+    El camino 416 existe para el caso "el `.part` ya está completo", pero si el
+    origen no manda `Content-Range` ni checksum, no hay nada que verifique que
+    esos bytes son el backup. Sin esta guarda, un `.part` de 13 bytes basura se
+    publicaba en `mssql-backup/` con verificación nula. S3 real siempre manda
+    `Content-Range`; OneDrive y Drive comparten esta función y no.
+    """
+    entrada = tmp_path / "in"
+    entrada.mkdir()
+    (entrada / (FILENAME + ".part")).write_bytes(b"BASURA-BASURA")
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(416)  # sin content-range, sin checksum
+
+    with pytest.raises(DownloadError) as exc:
+        download(
+            PRESIGNED,
+            incoming_dir=entrada,
+            final_dir=tmp_path / "out",
+            filename=FILENAME,
+            client=_client(handler),
+            now=parse_presign_window(PRESIGNED).signed_at,
+        )
+
+    assert not (tmp_path / "out" / FILENAME).exists()
+    assert "verificar" in str(exc.value)

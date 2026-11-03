@@ -26,6 +26,8 @@ from email.message import Message
 from email.utils import parseaddr
 from urllib.parse import urlsplit
 
+from kavos_acquire.download import sanitize_url
+
 logger = logging.getLogger(__name__)
 
 GMAIL_IMAP_HOST = "imap.gmail.com"
@@ -174,7 +176,12 @@ def parse_message(raw: bytes, *, fallback_id: str | None = None) -> ParsedMessag
 def _reason_for(url: str, link_hosts: list[str]) -> str:
     host = urlsplit(url).hostname or ""
     if not safe_https_url(url):
-        return f"URL no segura (se exige https sin credenciales): {host or url}"
+        # `sanitize_url` y no la URL cruda: este texto termina en el log de
+        # Prefect vía `AcquisitionFailed`, y la query lleva la credencial.
+        return (
+            "URL no segura (se exige https con host y sin credenciales): "
+            f"{sanitize_url(url)}"
+        )
     if not host_allowed(host, link_hosts):
         return f"host fuera de la allowlist: {host}"
     return ""
