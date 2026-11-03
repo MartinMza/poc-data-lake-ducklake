@@ -6,7 +6,13 @@ camino de datos: el extractor vuelca el backup completo a Parquet y el
 cargador lo sube a Bronze con reemplazo total por tabla (idempotente, sin
 ventanas ni modos por tabla).
 
-- `bak-extract` (primera): compara el `.bak` de `MSSQL_BAK_PATH` contra la
+- `acquire` (primera): trae el `.bak` nuevo desde Gmail a `mssql-backup/`
+  vía `kavos_acquire.pipeline.acquire_latest_bak`. Sin `ACQUIRE_IMAP_USER` o
+  `ACQUIRE_LINK_HOSTS` se salta en éxito con warning (el workflow manual con
+  `MSSQL_BAK_PATH` sigue intacto). Un fallo de adquisición falla la corrida
+  para que se vea (spec S9).
+- `bak-extract` (segunda): compara el `.bak` (el adquirido por `acquire` si
+  lo hubo, si no el de `MSSQL_BAK_PATH`) contra la
   marca JSON de la última extracción exitosa
   (`orchestration/.last_restore.json`: path+mtime+size+salida). Sin `.bak`
   nuevo se salta en éxito. Sin `MSSQL_BAK_PATH` se salta con warning (el
@@ -15,8 +21,10 @@ ventanas ni modos por tabla).
   `python -m bak2parquet --engine url` contra la instancia existente y
   actualiza la marca SOLO en éxito. El extractor restaura en una base temporal
   propia y la elimina al terminar: no deja objetos residuales.
-- `bronze-load` (segunda): corre `bronze/load_parquet.py --src` sobre la
+- `bronze-load` (tercera): corre `bronze/load_parquet.py --src` sobre la
   salida del extractor (fail-stop: si la extracción falla, no se carga).
+  Si la carga termina bien y `acquire` trajo un backup, se registra como
+  aplicado (`mark_applied`); si la carga falla nunca se marca.
 - Reintentos por tarea: cada `@task` lleva `retries` + `retry_delay_seconds`
   (configurables por env). Los intentos y sus logs quedan en Prefect.
 - Sin duplicar entornos: cada etapa corre como subproceso con el venv ya
@@ -32,6 +40,8 @@ Uso:
     # PREFECT_API_URL=http://localhost:4200/api para trackear en prefect-server.
 
 Entrypoint único y documentado: `python orchestration/flow.py`.
+Schedule declarado sin cron externo: `python orchestration/serve.py`
+(cron derivado de `ACQUIRE_POLL_HOURS`, default cada 4 h).
 """
 
 from __future__ import annotations
@@ -48,6 +58,14 @@ import time
 from pathlib import Path
 
 from prefect import flow, get_run_logger, task
+
+from kavos_acquire.download import DEFAULT_MIN_WINDOW_SECONDS
+from kavos_acquire.pipeline import (
+    STATUS_ACQUIRED,
+    AcquireOutcome,
+    acquire_latest_bak,
+    mark_applied,
+)
 
 ROOT = Path(__file__).resolve().parent.parent
 
@@ -73,6 +91,13 @@ BAK_SETTLE_SECONDS = int(os.getenv("ORCH_BAK_SETTLE_SECONDS", "5"))
 MOTOR_BACKUP_DIR = "/var/opt/mssql/backup"
 
 FLOW_NAME = "kavos-lake-medallion"
+
+# Estado de la adquisición (Message-IDs, UIDs, último backup aplicado).
+# Se lee en el momento de correr (no al importar) para que `serve` de larga
+# vida vea cambios de env sin reiniciar.
+ACQUIRE_STATE_DEFAULT = str(ROOT / "orchestration" / ".acquire_state.json")
+ACQUIRE_INCOMING_DEFAULT = str(ROOT / "mssql-backup" / ".incoming")
+ACQUIRE_FINAL_DEFAULT = str(ROOT / "mssql-backup")
 
 
 def _run(cmd: list[str], stage: str, extra_env: dict[str, str] | None = None) -> str:
@@ -132,17 +157,91 @@ def _extractor_env() -> dict[str, str]:
     return {"PYTHONPATH": f"{path}{os.pathsep}{base}" if base else path}
 
 
-@task(name="bak-extract", retries=TASK_RETRIES,
-      retry_delay_seconds=TASK_RETRY_DELAY_SECONDS, log_prints=True)
-def bak_extract() -> str:
-    """Etapa 1: `.bak` nuevo -> Parquet (restaura temporal, extrae, limpia).
+def bak_path_for(outcome: AcquireOutcome | dict | None, env_path: str) -> str:
+    """Ruta del `.bak` a extraer: lo adquirido manda, si no vale el env.
 
-    Sin variable configurada termina en éxito con warning (el operador ya
-    dejó el Parquet). Con `.bak` sin cambios respecto a la marca termina en
-    éxito sin tocar el motor. La marca se actualiza solo en éxito.
+    Pura (sin Prefect ni red): cuando `acquire` trajo un backup nuevo, el
+    flow ingiere ese archivo sin que el operador reapuntee `MSSQL_BAK_PATH`.
+    """
+    if outcome is None:
+        return env_path
+    if isinstance(outcome, dict):
+        status, path = outcome.get("status"), outcome.get("path")
+    else:
+        status, path = outcome.status, outcome.path
+    if status == STATUS_ACQUIRED and path:
+        return str(path)
+    return env_path
+
+
+def should_mark_applied(outcome: AcquireOutcome | dict | None, load_ok: bool) -> bool:
+    """Decide si corresponde `mark_applied`: solo con carga exitosa y backup.
+
+    Pura: nunca se marca cuando la carga falló. Un backup marcado sin
+    ingesta se rechaza por antigüedad para siempre y jamás entra al lago.
+    """
+    if not load_ok or outcome is None:
+        return False
+    if isinstance(outcome, dict):
+        backup_id = outcome.get("backup_id")
+    else:
+        backup_id = outcome.backup_id
+    return backup_id is not None
+
+
+@task(name="acquire", retries=TASK_RETRIES,
+      retry_delay_seconds=TASK_RETRY_DELAY_SECONDS, log_prints=True)
+def acquire() -> AcquireOutcome:
+    """Etapa 1: trae el `.bak` nuevo desde Gmail a `mssql-backup/`.
+
+    Sin `ACQUIRE_IMAP_USER` o `ACQUIRE_LINK_HOSTS` termina en éxito con
+    warning (el workflow manual con `MSSQL_BAK_PATH` sigue intacto). Un
+    fallo de adquisición propaga la excepción: la corrida queda en fallido
+    en Prefect con el motivo (spec S9).
     """
     logger = get_run_logger()
-    bak_raw = os.getenv("MSSQL_BAK_PATH", "").strip()
+    imap_user = os.getenv("ACQUIRE_IMAP_USER", "").strip()
+    link_hosts = [h.strip() for h in
+                  os.getenv("ACQUIRE_LINK_HOSTS", "").split(",")
+                  if h.strip()]
+    if not imap_user or not link_hosts:
+        msg = ("acquire: sin ACQUIRE_IMAP_USER o ACQUIRE_LINK_HOSTS; se salta "
+               "la adquisición (bak-extract usa MSSQL_BAK_PATH como siempre)")
+        logger.warning(msg)
+        print(f"WARNING: {msg}", flush=True)
+        return AcquireOutcome(status="no_new_backup",
+                              message="skipped: sin config de adquisición")
+    outcome = acquire_latest_bak(
+        state_path=os.getenv("ACQUIRE_STATE_PATH", ACQUIRE_STATE_DEFAULT),
+        incoming_dir=os.getenv("ACQUIRE_INCOMING_DIR", ACQUIRE_INCOMING_DEFAULT),
+        final_dir=os.getenv("ACQUIRE_FINAL_DIR", ACQUIRE_FINAL_DEFAULT),
+        imap_user=imap_user,
+        imap_password=os.getenv("ACQUIRE_IMAP_APP_PASSWORD", ""),
+        sender=os.getenv("ACQUIRE_FROM", ""),
+        subject_pattern=os.getenv("ACQUIRE_SUBJECT_PATTERN", ""),
+        link_hosts=link_hosts,
+        min_window_seconds=int(os.getenv(
+            "ACQUIRE_MIN_WINDOW_SECONDS", str(DEFAULT_MIN_WINDOW_SECONDS))),
+    )
+    logger.info("acquire: %s", outcome.message)
+    print(f"acquire: {outcome.status}: {outcome.message}", flush=True)
+    return outcome
+
+
+@task(name="bak-extract", retries=TASK_RETRIES,
+      retry_delay_seconds=TASK_RETRY_DELAY_SECONDS, log_prints=True)
+def bak_extract(bak_path: str | None = None) -> str:
+    """Etapa 2: `.bak` nuevo -> Parquet (restaura temporal, extrae, limpia).
+
+    `bak_path` lo pasa el flow (lo adquirido por `acquire`); sin él se usa
+    `MSSQL_BAK_PATH` como siempre. Sin variable configurada termina en
+    éxito con warning (el operador ya dejó el Parquet). Con `.bak` sin
+    cambios respecto a la marca termina en éxito sin tocar el motor. La
+    marca se actualiza solo en éxito.
+    """
+    logger = get_run_logger()
+    bak_raw = (bak_path if bak_path is not None
+               else os.getenv("MSSQL_BAK_PATH", "")).strip()
     if not bak_raw:
         msg = ("bak-extract: MSSQL_BAK_PATH no definida; se salta la "
                "extracción (bronze-load usa el Parquet ya generado)")
@@ -227,7 +326,7 @@ def bak_extract() -> str:
 @task(name="bronze-load", retries=TASK_RETRIES,
       retry_delay_seconds=TASK_RETRY_DELAY_SECONDS, log_prints=True)
 def bronze_load() -> str:
-    """Etapa 2: Parquet del extractor -> Bronze (reemplazo total por tabla)."""
+    """Etapa 3: Parquet del extractor -> Bronze (reemplazo total por tabla)."""
     out = _run(
         [BRONZE_PYTHON, "bronze/load_parquet.py", "--src", str(PARQUET_OUT)],
         "bronze-load",
@@ -237,11 +336,31 @@ def bronze_load() -> str:
 
 @flow(name=FLOW_NAME, log_prints=True)
 def kavos_lake_medallion_flow() -> dict[str, str]:
-    """Día completo: extracción del `.bak` a Parquet y carga a Bronze
-    (fail-stop: si la extracción falla, no se carga)."""
-    extract_log = bak_extract()
+    """Día completo: adquisición del `.bak`, extracción a Parquet y Bronze
+    (fail-stop: si la adquisición o la extracción fallan, no se carga; si la
+    carga falla, el backup nunca se marca como aplicado)."""
+    outcome = acquire()
+    extract_log = bak_extract(
+        bak_path_for(outcome, os.getenv("MSSQL_BAK_PATH", "")))
     load_log = bronze_load()
-    return {"bak_extract": extract_log, "bronze_load": load_log}
+    if isinstance(outcome, dict):
+        backup_id = outcome.get("backup_id")
+    else:
+        backup_id = outcome.backup_id
+    if should_mark_applied(outcome, True):
+        mark_applied(
+            os.getenv("ACQUIRE_STATE_PATH", ACQUIRE_STATE_DEFAULT),
+            backup_id,
+        )
+        applied_log = f"applied {backup_id.filename}"
+    else:
+        applied_log = "skipped: sin backup adquirido"
+    if isinstance(outcome, dict):
+        acquire_log = f"{outcome.get('status')}: {outcome.get('message', '')}"
+    else:
+        acquire_log = f"{outcome.status}: {outcome.message}"
+    return {"acquire": acquire_log, "bak_extract": extract_log,
+            "bronze_load": load_log, "mark_applied": applied_log}
 
 
 def main(argv: list[str] | None = None) -> int:
