@@ -42,6 +42,7 @@ COPY --from=ghcr.io/astral-sh/uv:0.9.26 /uv /uvx /bin/
 
 # 4. Pre-construir los entornos virtuales de los módulos del proyecto
 COPY bronze/requirements.txt /workspace/bronze/requirements.txt
+COPY bak2parquet/requirements.txt /workspace/bak2parquet/requirements.txt
 COPY orchestration/requirements.txt /workspace/orchestration/requirements.txt
 COPY requirements.txt /workspace/requirements.txt
 
@@ -49,6 +50,11 @@ COPY requirements.txt /workspace/requirements.txt
 # existe. Su COPY hacía fallar el build de todo el stack, lake-init incluido.
 RUN uv venv /workspace/bronze/.venv --python 3.12 \
     && uv pip install -p /workspace/bronze/.venv/bin/python -r /workspace/bronze/requirements.txt \
+    # El flow corre `python -m bak2parquet` con el intérprete de bronze, así que
+    # las deps del extractor (pyodbc, arrow-odbc) tienen que vivir ahí. Sin esto
+    # la extracción falla con "No module named 'pyodbc'". container_init.sh las
+    # instalaba en runtime; hornearlas saca la red del primer arranque.
+    && uv pip install -p /workspace/bronze/.venv/bin/python -r /workspace/bak2parquet/requirements.txt \
     && uv venv /workspace/orchestration/.venv --python 3.12 \
     && uv pip install -p /workspace/orchestration/.venv/bin/python -r /workspace/orchestration/requirements.txt \
     && uv venv /workspace/.venv --python 3.12 \

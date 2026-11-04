@@ -112,3 +112,69 @@ def test_con_carga_ok_pero_sin_backup_no_se_marca():
 def test_sin_outcome_no_se_marca():
     assert should_mark_applied(None, True) is False
     assert should_mark_applied(None, False) is False
+
+
+# --- bak_path_for: reintento tras una extracción fallida ---------------------
+
+
+def test_sin_adquisicion_ni_env_usa_el_artefacto_mas_nuevo_del_disco(tmp_path):
+    """Si la extracción falló, la próxima corrida tiene que reintentarla.
+
+    La adquisición se consume una sola vez (el UID y el Message-ID avanzan), así
+    que sin este fallback el artefacto ya descargado queda huérfano y el lago no
+    se actualiza nunca más. Pasó de verdad: la primera corrida en Docker bajó el
+    backup y murió en `bak-extract` por falta de pyodbc.
+    """
+    (tmp_path / "FAF12_Kavos_2026_10_07_233301_411720.bak").write_bytes(b"viejo")
+    nuevo = tmp_path / "FAF12_Kavos_2026_11_03_233302_428734.bak.tar.gz"
+    nuevo.write_bytes(b"nuevo")
+
+    assert bak_path_for(_sin_nada(), "", tmp_path) == str(nuevo)
+
+
+def test_sin_backups_en_disco_devuelve_vacio_para_que_se_saltee(tmp_path):
+    assert bak_path_for(_sin_nada(), "", tmp_path) == ""
+
+
+def test_el_env_gana_sobre_lo_que_haya_en_disco(tmp_path):
+    (tmp_path / NUEVO).write_bytes(b"del disco")
+
+    assert bak_path_for(_sin_nada(), "/explicito/x.bak", tmp_path) == "/explicito/x.bak"
+
+
+def test_lo_adquirido_gana_sobre_el_disco_y_el_env(tmp_path):
+    (tmp_path / "FAF12_Kavos_2026_10_07_233301_411720.bak").write_bytes(b"viejo")
+
+    assert bak_path_for(_adquirido(), "/explicito/x.bak", tmp_path) == (
+        f"/repo/mssql-backup/{NUEVO}"
+    )
+
+
+def test_el_fallback_nunca_carga_algo_mas_viejo_que_lo_aplicado(tmp_path):
+    """La guarda de antigüedad también aplica al fallback de disco.
+
+    `guard_monotonic` corre en `acquire`, pero el fallback no pasa por ahí. Si
+    alguien borra el artefacto nuevo y queda uno viejo, cargarlo retrocedería el
+    lago en silencio: justo lo que la feature existe para impedir.
+    """
+    (tmp_path / "FAF12_Kavos_2026_10_07_233301_411720.bak").write_bytes(b"viejo")
+    aplicado = parse_backup_id("FAF12_Kavos_2026_11_03_233302_428734.bak.tar.gz")
+
+    assert bak_path_for(_sin_nada(), "", tmp_path, applied=aplicado) == ""
+
+
+def test_el_fallback_acepta_algo_mas_nuevo_que_lo_aplicado(tmp_path):
+    (tmp_path / "FAF12_Kavos_2026_10_07_233301_411720.bak").write_bytes(b"viejo")
+    nuevo = tmp_path / "FAF12_Kavos_2026_11_03_233302_428734.bak.tar.gz"
+    nuevo.write_bytes(b"nuevo")
+    aplicado = parse_backup_id("FAF12_Kavos_2026_10_07_233301_411720.bak")
+
+    assert bak_path_for(_sin_nada(), "", tmp_path, applied=aplicado) == str(nuevo)
+
+
+def test_el_fallback_acepta_si_no_hay_nada_aplicado_todavia(tmp_path):
+    (tmp_path / "FAF12_Kavos_2026_10_07_233301_411720.bak").write_bytes(b"viejo")
+
+    assert bak_path_for(_sin_nada(), "", tmp_path, applied=None) == str(
+        tmp_path / "FAF12_Kavos_2026_10_07_233301_411720.bak"
+    )

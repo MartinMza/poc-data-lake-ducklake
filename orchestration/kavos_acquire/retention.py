@@ -88,6 +88,17 @@ def plan_retention(directory: str | Path, keep: int = DEFAULT_KEEP) -> Retention
     )
 
 
+def newest_backup(directory: str | Path) -> Path | None:
+    """El artefacto de backup más nuevo del directorio, o `None` si no hay.
+
+    Se usa como fallback de la ingesta: si la adquisición ya se consumió pero la
+    extracción falló, el archivo sigue en disco y hay que reintentarlo. El orden
+    es el mismo de la poda (timestamp del nombre, nunca mtime).
+    """
+    plan = plan_retention(directory, keep=1)
+    return plan.keep[0][1] if plan.keep else None
+
+
 def apply_retention(plan: RetentionPlan) -> list[Path]:
     """Borra lo que el plan indica y devuelve los paths efectivamente borrados.
 

@@ -61,7 +61,9 @@ from prefect import flow, get_run_logger, task
 
 from kavos_acquire.defaults import FINNEGANS_SENDER, FINNEGANS_SUBJECT_PATTERN
 from kavos_acquire.download import DEFAULT_MIN_WINDOW_SECONDS
-from kavos_acquire.retention import DEFAULT_KEEP
+from kavos_acquire.identity import BackupId, BackupNameError, parse_backup_id
+from kavos_acquire.retention import DEFAULT_KEEP, newest_backup
+from kavos_acquire.state import load_state
 from kavos_acquire.pipeline import (
     DEFAULT_SINCE_DAYS,
     STATUS_ACQUIRED,
@@ -160,21 +162,57 @@ def _extractor_env() -> dict[str, str]:
     return {"PYTHONPATH": f"{path}{os.pathsep}{base}" if base else path}
 
 
-def bak_path_for(outcome: AcquireOutcome | dict | None, env_path: str) -> str:
-    """Ruta del `.bak` a extraer: lo adquirido manda, si no vale el env.
+def bak_path_for(
+    outcome: AcquireOutcome | dict | None,
+    env_path: str,
+    final_dir: str | Path | None = None,
+    applied: BackupId | None = None,
+) -> str:
+    """Ruta del `.bak` a extraer, en orden de precedencia.
 
-    Pura (sin Prefect ni red): cuando `acquire` trajo un backup nuevo, el
-    flow ingiere ese archivo sin que el operador reapuntee `MSSQL_BAK_PATH`.
+    1. Lo que trajo `acquire` en esta corrida.
+    2. `MSSQL_BAK_PATH` explícito (carga manual del operador).
+    3. El artefacto más nuevo que ya esté en `final_dir`.
+
+    El punto 3 no es un lujo: la adquisición se consume una sola vez (avanzan el
+    UID y el Message-ID), así que si la extracción falla, sin este fallback el
+    archivo descargado queda huérfano y el lago no se actualiza nunca más.
+    `bak-extract` ya tiene su propia marca (path+mtime+size), así que reintentar
+    sobre lo mismo es barato: se salta si no cambió.
+
+    Pura: no toca red, motor ni Prefect.
     """
-    if outcome is None:
+    if outcome is not None:
+        if isinstance(outcome, dict):
+            status, path = outcome.get("status"), outcome.get("path")
+        else:
+            status, path = outcome.status, outcome.path
+        if status == STATUS_ACQUIRED and path:
+            return str(path)
+    if env_path:
         return env_path
-    if isinstance(outcome, dict):
-        status, path = outcome.get("status"), outcome.get("path")
-    else:
-        status, path = outcome.status, outcome.path
-    if status == STATUS_ACQUIRED and path:
-        return str(path)
-    return env_path
+    if final_dir:
+        pendiente = newest_backup(final_dir)
+        if pendiente is not None:
+            return str(pendiente) if _puede_ingerirse(pendiente, applied) else ""
+    return ""
+
+
+def _puede_ingerirse(ruta: Path, applied: BackupId | None) -> bool:
+    """La guarda de antigüedad también vale para el fallback de disco.
+
+    `guard_monotonic` corre en `acquire`, pero el fallback no pasa por ahí. Si
+    alguien borra el artefacto nuevo y queda uno viejo, ingerirlo retrocedería
+    el lago en silencio, que es exactamente lo que esta feature existe para
+    impedir. Un nombre que no parsea tampoco se ingiere.
+    """
+    try:
+        candidato = parse_backup_id(ruta.name)
+    except BackupNameError:
+        return False
+    if applied is None:
+        return True
+    return candidato > applied
 
 
 def should_mark_applied(outcome: AcquireOutcome | dict | None, load_ok: bool) -> bool:
@@ -352,8 +390,20 @@ def kavos_lake_medallion_flow() -> dict[str, str]:
     (fail-stop: si la adquisición o la extracción fallan, no se carga; si la
     carga falla, el backup nunca se marca como aplicado)."""
     outcome = acquire()
+    # El estado se lee para que el fallback de disco respete la guarda de
+    # antigüedad. Un estado corrupto levanta StateError y falla la corrida:
+    # preferimos no ingerir antes que ingerir sin la guarda.
+    applied = load_state(
+        os.getenv("ACQUIRE_STATE_PATH", ACQUIRE_STATE_DEFAULT)
+    ).applied
     extract_log = bak_extract(
-        bak_path_for(outcome, os.getenv("MSSQL_BAK_PATH", "")))
+        bak_path_for(
+            outcome,
+            os.getenv("MSSQL_BAK_PATH", ""),
+            os.getenv("ACQUIRE_FINAL_DIR", ACQUIRE_FINAL_DEFAULT),
+            applied,
+        )
+    )
     load_log = bronze_load()
     if isinstance(outcome, dict):
         backup_id = outcome.get("backup_id")
