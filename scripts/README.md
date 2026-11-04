@@ -18,7 +18,7 @@ Puertos host (sin colisión con un Postgres local en 5432):
 ## Puesta en marcha desde cero
 
 ```bash
-cp .env.example .env   # opcional
+./configure.sh         # Asistente amigable para generar/verificar .env (o ./configure.sh --quick)
 docker compose up -d
 ./scripts/bootstrap.sh
 pip install -r scripts/requirements-smoke.txt

@@ -43,7 +43,7 @@ docker compose exec -T postgres-catalog pg_restore \
 echo "    pg_restore OK"
 
 echo "==> [2/3] purge + re-subida del bucket s3://$LAKEHOUSE_BUCKET/"
-DULSE_ALLOW_PURGE=yes "$BRONZE_PYTHON" scripts/s3_sync.py purge \
+KAVOS_LAKE_ALLOW_PURGE=yes "$BRONZE_PYTHON" scripts/s3_sync.py purge \
   "s3://$LAKEHOUSE_BUCKET/"
 "$BRONZE_PYTHON" scripts/s3_sync.py upload \
   "$SRC/bucket/" "s3://$LAKEHOUSE_BUCKET/"

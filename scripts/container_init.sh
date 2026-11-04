@@ -27,7 +27,7 @@ MSSQL_PORT="${MSSQL_PORT:-1433}"
 MSSQL_SA_PASSWORD="${MSSQL_SA_PASSWORD:-Str0ng!PoC-Local01}"
 
 echo "================================================================="
-echo "  Dulse Data Lake — Auto-Init (Portainer / Docker Compose)"
+echo "  KavosLake Data Platform — Auto-Init (Portainer / Docker Compose)"
 echo "================================================================="
 
 echo "==> [1/4] Verificando base de catálogo '$CATALOG_DB' en $CATALOG_HOST..."

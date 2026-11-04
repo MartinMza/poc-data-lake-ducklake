@@ -1,0 +1,67 @@
+"""Fixtures compartidas: base de credenciales de prueba y credenciales fijas.
+
+Los tests corren contra un Postgres real, en una base aparte
+(`kavos_lake_auth_test`) que se crea y se siembra sola. Nada de mocks: lo que se
+prueba es exactamente lo que va a correr en producción.
+"""
+
+from __future__ import annotations
+
+import os
+import sys
+from pathlib import Path
+
+# Layout src/: el paquete kavos_lake vive en src/kavos_lake y no se instala con pip en el
+# venv de desarrollo, así que se agrega la raíz de paquetes al path del proceso.
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
+
+import psycopg
+import pytest
+
+TEST_DB = "kavos_lake_auth_test"
+# Sin credenciales legadas: la migración del entorno no debe correr en tests.
+os.environ["AUTH_USERS"] = ""
+os.environ["AUTH_API_KEYS"] = ""
+os.environ["AUTH_DB_NAME"] = TEST_DB
+os.environ.setdefault(
+    "AUTH_JWT_SECRET", "test-jwt-secret-0123456789abcdef0123456789abcdef"
+)
+
+from kavos_lake.adapters.outbound import postgres_auth as auth_db  # noqa: E402
+
+from tests import support as test_support  # noqa: E402
+from tests.support import (  # noqa: E402
+    PASSWORD,
+    SUPERADMIN_PASSWORD,
+    SUPERADMIN_USERNAME,
+    TEST_API_KEY,
+    USERNAME,
+)
+
+
+def _dsn(dbname: str) -> str:
+    return auth_db.dsn().replace(f"dbname={TEST_DB}", f"dbname={dbname}")
+
+
+@pytest.fixture(scope="session", autouse=True)
+def _database():
+    with psycopg.connect(_dsn("postgres"), autocommit=True) as conn:
+        exists = conn.execute(
+            "SELECT 1 FROM pg_database WHERE datname = %s", (TEST_DB,)
+        ).fetchone()
+        if not exists:
+            conn.execute(f'CREATE DATABASE "{TEST_DB}"')
+    with auth_db.connection() as conn:
+        auth_db.ensure_schema(conn)
+    test_support.seed()
+    yield
+
+
+@pytest.fixture(autouse=True)
+def _reset_login_throttle():
+    """El throttle es un singleton de proceso: se limpia entre tests para que el
+    estado de un test no bloquee el login de otro."""
+    from kavos_lake.adapters.outbound import memory_throttle as throttle
+
+    throttle.login_throttle = throttle._build_default()
+    yield

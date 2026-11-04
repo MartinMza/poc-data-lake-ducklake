@@ -8,7 +8,7 @@ Uso (con el venv que tenga duckdb fijado, p. ej. bronze/.venv):
     bronze/.venv/bin/python scripts/lake_counts.py [--schemas bronze]
 
 Env: mismos defaults que docker-compose.yml/.env.example (CATALOG_*,
-GARAGE_S3_*, DUCKLAKE_DATA_PATH).
+GARAGE_S3_*, LAKEHOUSE_BUCKET + DUCKLAKE_DATA_PREFIX).
 """
 
 from __future__ import annotations
@@ -44,8 +44,7 @@ def connect():
     )
     garage_host = _env("GARAGE_HOST", "localhost")
     garage_port = _env("GARAGE_S3_PORT", "3900")
-    endpoint = _env("GARAGE_S3_ENDPOINT", f"{garage_host}:{garage_port}")
-    endpoint_host = endpoint.removeprefix("http://").removeprefix("https://")
+    endpoint_host = f"{garage_host}:{garage_port}"
     con = duckdb.connect()
     con.execute("INSTALL ducklake; LOAD ducklake;")
     con.execute("INSTALL postgres; LOAD postgres;")
@@ -57,7 +56,9 @@ def connect():
         f"ENDPOINT '{endpoint_host}', URL_STYLE 'path', USE_SSL false, "
         f"REGION '{_env('GARAGE_S3_REGION', 'garage')}');"
     )
-    data_path = _env("DUCKLAKE_DATA_PATH", "s3://lakehouse/data/")
+    bucket = _env("LAKEHOUSE_BUCKET", "lakehouse")
+    prefix = _env("DUCKLAKE_DATA_PREFIX", "data").strip().strip("/")
+    data_path = f"s3://{bucket}/{prefix}/" if prefix else f"s3://{bucket}/"
     try:
         con.execute(
             f"ATTACH 'ducklake:postgres:{cat}' AS lake (DATA_PATH '{data_path}')"
