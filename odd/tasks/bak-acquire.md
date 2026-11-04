@@ -621,3 +621,28 @@ del worker que había ejecutado *el bloque Python extraído a mano*. Eso prueba 
 la lógica es correcta; no prueba que el script la ejecute. Lógica verificada y
 despliegue verificado son dos cosas distintas, y sólo la primera estaba cubierta.
 La prueba real llegó recién al correr el bootstrap de verdad.
+
+### L19 — Merge a main y el retarget que falló en silencio
+
+Los tres tramos entraron a `main`: PR #3 (`refactor/hexagonal-architecture`),
+PR #5 (`feat/bak2parquet`) y PR #6 (`feat/bak-acquire`). `main` quedó en
+`2ed8d71` y el árbol es idéntico al de `feat/bak-acquire`
+(`b582538...`), así que cambiar de rama no altera ningún archivo montado en los
+contenedores.
+
+**El defecto:** PR #4 apuntaba a `refactor/hexagonal-architecture`, no a `main`.
+Para corregirlo corrí `gh pr edit 4 --base main`, que falló con un error de
+GraphQL por la deprecación de Projects classic y **no aplicó el cambio**. El
+`sleep` y el `gh pr merge 4` siguientes corrieron igual: el PR se mergeó a
+`refactor`. `main` no se movió.
+
+Lo detecté porque después de cada merge comparo el sha de `origin/main` contra
+el valor anterior. Si no lo hubiera hecho, habría reportado "mergeado" con
+`main` sin el 90% del trabajo.
+
+La corrección fue un PR nuevo desde `feat/bak2parquet` a `main` (#5), verificando
+`mergeable` **antes** de mergear en lugar de encadenar comandos a ciegas.
+
+La lección es la misma de L18 con otro disfraz: un comando que no falla con exit
+code distinto de cero puede no haber hecho nada. La única prueba es leer el
+efecto, no el resultado del comando.
