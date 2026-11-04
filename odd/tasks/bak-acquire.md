@@ -431,3 +431,39 @@ diez lugares. El catálogo dinámico no tiene allowlist desde el commit
 `009e101`, así que la realidad es 788 tablas / 23 225 319 filas. Se corrigieron
 `README.md` y `docs/MANUAL.md` para describir el catálogo completo y consultar
 los conteos en vez de citarlos de memoria.
+
+### L14 — Documentación al día y guardas contra la repetición
+
+**Documentación.** Se corrigió la deriva en `README.md`, `docs/MANUAL.md`,
+`docs/ARCHITECTURE.md`, `docs/API.md` y `scripts/README.md`: la adquisición, la
+retención 1, el catálogo completo (sin conteos fijos), el scheduler
+`prefect-serve`, el `[5/5]` del asistente y la regla de rebuild. Se agregó la
+tabla de las 12 variables `ACQUIRE_*`. Las notas de vigencia de
+`docs/findings*.md` se actualizaron, pero sus mediciones fechadas se conservan
+tal cual: son evidencia de su fecha.
+
+**Guardas, una por cada clase de fallo que apareció:**
+
+| Clase de fallo | Guarda |
+|---|---|
+| Faltaba una dep y se descubría a las 12 de la noche | `docker/Dockerfile.pipeline` importa `pyodbc`, `arrow_odbc`, `pyarrow`, `duckdb`, `prefect`, `httpx`, `fastapi` al final del build: si falta una, **rompe el build** |
+| Recrear el contenedor sin rebuild (código viejo corriendo) | `scripts/verify_stack.sh` compara el `sha256` de `flow.py`, `serve.py`, `pipeline.py` y `retention.py` contra el contenedor, y si difieren imprime el comando de arreglo |
+| Config de adquisición incompleta y silenciosa | `verify_stack.sh` valida deps, estado legible y exactamente un artefacto fechado; `configure.sh --check` reporta la adquisición |
+| Variable que el código lee y nadie documenta | `tests/test_docs_drift.py`: toda `ACQUIRE_*` leída con `os.getenv` tiene que aparecer en `docs/MANUAL.md` |
+| Conteos fijos en los docs | `tests/test_docs_drift.py`: `README.md`, `MANUAL.md` y `API.md` no pueden citar `485 557`, `7 tablas` ni `siete tablas` |
+
+**Defecto nuevo que encontró la propia guarda.** `verify_stack.sh` mostró
+`aplicado: ninguno` con el lago ya cargado. Causa: la corrida exitosa ingirió
+**por el fallback de disco**, y `should_mark_applied` sólo miraba el outcome de
+`acquire`, así que `applied` quedaba en `None` y la guarda de antigüedad se
+quedaba sin referencia: cualquier artefacto, incluso uno viejo, habría sido
+aceptado.
+
+Corrección: `bak_extract` devuelve `{status, source, detail}` y el flow marca
+como aplicado **la ruta que realmente se ingirió** (`applied_id_for`), sólo si
+la extracción ocurrió. Marcar el candidato cuando la extracción se saltó
+registraría como aplicado algo que no entró al lago.
+
+Queda documentado un límite conocido: la guarda sólo tiene referencia después
+de la primera extracción real. Si el estado se pierde, hay que reseedarlo; el
+script de siembra es tres líneas sobre `mark_applied`.

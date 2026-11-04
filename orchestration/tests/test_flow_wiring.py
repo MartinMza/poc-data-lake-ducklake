@@ -4,7 +4,7 @@ Fija el contrato que une `acquire` con la ingesta sin correr el flow:
 
 - `bak_path_for`: lo adquirido manda; sin adquisición vale `MSSQL_BAK_PATH`.
 - `cron_from_hours`: el schedule declarado de `serve.py`.
-- `should_mark_applied`: solo se marca aplicado con carga exitosa y backup.
+- `applied_id_for`: se marca lo que realmente se ingirió, venga de donde venga.
 """
 
 from __future__ import annotations
@@ -13,7 +13,7 @@ from pathlib import Path
 
 import pytest
 
-from flow import bak_path_for, should_mark_applied
+from flow import applied_id_for, bak_path_for
 from kavos_acquire.identity import parse_backup_id
 from kavos_acquire.pipeline import (
     STATUS_ACQUIRED,
@@ -94,24 +94,31 @@ def test_cron_fuera_de_rango_falla(horas: int):
         cron_from_hours(horas)
 
 
-# --- should_mark_applied: nunca marcar si la carga falló ---------------------
+# --- applied_id_for: se marca la ruta ingerida, no el outcome ----------------
+#
+# Hallazgo de la verificación: la corrida exitosa ingirió por el fallback de
+# disco (la adquisición ya se había consumido), así que mirar el outcome dejaba
+# `applied` en None y la guarda de antigüedad se quedaba sin referencia. El
+# estado real decía "aplicado: ninguno" con el lago ya cargado.
 
 
-def test_con_carga_ok_y_backup_se_marca():
-    assert should_mark_applied(_adquirido(), True) is True
+def test_marca_la_identidad_del_artefacto_ingerido():
+    assert applied_id_for(f"/repo/mssql-backup/{NUEVO}") == parse_backup_id(NUEVO)
 
 
-def test_con_carga_fallida_no_se_marca_aunque_haya_backup():
-    assert should_mark_applied(_adquirido(), False) is False
+def test_marca_tambien_cuando_el_bak_ya_esta_descomprimido():
+    # El extractor descomprime el .tar.gz: la ruta ingerida puede ser el .bak.
+    plano = "FAF12_Kavos_2026_11_03_233302_428734.bak"
+
+    assert applied_id_for(f"/repo/mssql-backup/{plano}") == parse_backup_id(plano)
 
 
-def test_con_carga_ok_pero_sin_backup_no_se_marca():
-    assert should_mark_applied(_sin_nada(), True) is False
+def test_no_marca_nada_si_no_hay_ruta():
+    assert applied_id_for("") is None
 
 
-def test_sin_outcome_no_se_marca():
-    assert should_mark_applied(None, True) is False
-    assert should_mark_applied(None, False) is False
+def test_no_marca_un_nombre_que_no_es_un_backup(tmp_path):
+    assert applied_id_for("/repo/notas.txt") is None
 
 
 # --- bak_path_for: reintento tras una extracción fallida ---------------------

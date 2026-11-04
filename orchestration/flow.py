@@ -219,19 +219,24 @@ def _puede_ingerirse(ruta: Path, applied: BackupId | None) -> bool:
     return candidato > applied
 
 
-def should_mark_applied(outcome: AcquireOutcome | dict | None, load_ok: bool) -> bool:
-    """Decide si corresponde `mark_applied`: solo con carga exitosa y backup.
+def applied_id_for(bak_path: str) -> BackupId | None:
+    """Identidad del backup a registrar como aplicado, o `None` si no aplica.
 
-    Pura: nunca se marca cuando la carga falló. Un backup marcado sin
-    ingesta se rechaza por antigüedad para siempre y jamás entra al lago.
+    Se basa en la ruta **efectivamente ingerida**, no en el outcome de
+    `acquire`: si la ingesta vino por el fallback de disco (porque la
+    adquisición ya se había consumido en una corrida anterior), mirar el
+    outcome dejaba `applied` en `None` y la guarda de antigüedad se quedaba sin
+    referencia. Pasó de verdad: el lago tenía la data del 2026-11-03 y el estado
+    decía "aplicado: ninguno".
+
+    Pura: no toca disco ni state. Un nombre que no parsea devuelve `None`.
     """
-    if not load_ok or outcome is None:
-        return False
-    if isinstance(outcome, dict):
-        backup_id = outcome.get("backup_id")
-    else:
-        backup_id = outcome.backup_id
-    return backup_id is not None
+    if not bak_path:
+        return None
+    try:
+        return parse_backup_id(Path(bak_path).name)
+    except BackupNameError:
+        return None
 
 
 @task(name="acquire", retries=TASK_RETRIES,
@@ -284,7 +289,7 @@ def acquire() -> AcquireOutcome:
 
 @task(name="bak-extract", retries=TASK_RETRIES,
       retry_delay_seconds=TASK_RETRY_DELAY_SECONDS, log_prints=True)
-def bak_extract(bak_path: str | None = None) -> str:
+def bak_extract(bak_path: str | None = None) -> dict[str, str]:
     """Etapa 2: `.bak` nuevo -> Parquet (restaura temporal, extrae, limpia).
 
     `bak_path` lo pasa el flow (lo adquirido por `acquire`); sin él se usa
@@ -301,7 +306,7 @@ def bak_extract(bak_path: str | None = None) -> str:
                "extracción (bronze-load usa el Parquet ya generado)")
         logger.warning(msg)
         print(f"WARNING: {msg}", flush=True)
-        return "skipped: sin MSSQL_BAK_PATH"
+        return {"status": "skipped", "source": "", "detail": "sin MSSQL_BAK_PATH"}
     src = Path(bak_raw).expanduser()
     if not src.is_absolute():
         src = (ROOT / src).resolve()
@@ -316,7 +321,7 @@ def bak_extract(bak_path: str | None = None) -> str:
                f"({size1}->{size2} B); posible copia parcial, se salta la extracción")
         logger.warning(msg)
         print(f"WARNING: {msg}", flush=True)
-        return "skipped: copia parcial sospechada"
+        return {"status": "skipped", "source": str(src), "detail": "copia parcial sospechada"}
     out = Path(PARQUET_OUT)
     current = {"bak_path": str(src), "size": size2,
                "mtime_ns": mtime2, "out": str(out)}
@@ -326,7 +331,7 @@ def bak_extract(bak_path: str | None = None) -> str:
                f"{size2} B); se salta la extracción")
         logger.info(msg)
         print(msg, flush=True)
-        return "skipped: sin .bak nuevo"
+        return {"status": "skipped", "source": str(src), "detail": "sin .bak nuevo"}
     # .bak / .tar nuevo (nombre, tamaño, mtime o salida distintos de la marca).
     backup_dir = ROOT / "mssql-backup"
     backup_dir.mkdir(exist_ok=True)
@@ -381,7 +386,8 @@ def bak_extract(bak_path: str | None = None) -> str:
     with open(RESTORE_MARK_PATH, "w", encoding="utf-8") as fh:
         json.dump(current, fh, indent=1)
     logger.info("bak-extract: marca actualizada en %s", RESTORE_MARK_PATH)
-    return f"extraído {dest.name} -> {out}"
+    return {"status": "extracted", "source": str(src),
+            "detail": f"extraído {dest.name} -> {out}"}
 
 
 @task(name="bronze-load", retries=TASK_RETRIES,
@@ -404,35 +410,31 @@ def kavos_lake_medallion_flow() -> dict[str, str]:
     # El estado se lee para que el fallback de disco respete la guarda de
     # antigüedad. Un estado corrupto levanta StateError y falla la corrida:
     # preferimos no ingerir antes que ingerir sin la guarda.
-    applied = load_state(
-        os.getenv("ACQUIRE_STATE_PATH", ACQUIRE_STATE_DEFAULT)
-    ).applied
-    extract_log = bak_extract(
-        bak_path_for(
-            outcome,
-            os.getenv("MSSQL_BAK_PATH", ""),
-            os.getenv("ACQUIRE_FINAL_DIR", ACQUIRE_FINAL_DEFAULT),
-            applied,
-        )
+    state_path = os.getenv("ACQUIRE_STATE_PATH", ACQUIRE_STATE_DEFAULT)
+    applied = load_state(state_path).applied
+    ruta_bak = bak_path_for(
+        outcome,
+        os.getenv("MSSQL_BAK_PATH", ""),
+        os.getenv("ACQUIRE_FINAL_DIR", ACQUIRE_FINAL_DEFAULT),
+        applied,
     )
+    extract = bak_extract(ruta_bak)
     load_log = bronze_load()
-    if isinstance(outcome, dict):
-        backup_id = outcome.get("backup_id")
+    # Sólo se marca lo que realmente se extrajo y cargó: si `bak-extract` se
+    # saltó, marcar el candidato registraría como aplicado algo que no se ingirió.
+    aplicado = None
+    if extract.get("status") == "extracted":
+        aplicado = applied_id_for(extract.get("source", ""))
+    if aplicado is not None:
+        mark_applied(state_path, aplicado)
+        applied_log = f"applied {aplicado.filename}"
     else:
-        backup_id = outcome.backup_id
-    if should_mark_applied(outcome, True):
-        mark_applied(
-            os.getenv("ACQUIRE_STATE_PATH", ACQUIRE_STATE_DEFAULT),
-            backup_id,
-        )
-        applied_log = f"applied {backup_id.filename}"
-    else:
-        applied_log = "skipped: sin backup adquirido"
+        applied_log = "skipped: sin backup extraído en esta corrida"
     if isinstance(outcome, dict):
         acquire_log = f"{outcome.get('status')}: {outcome.get('message', '')}"
     else:
         acquire_log = f"{outcome.status}: {outcome.message}"
-    return {"acquire": acquire_log, "bak_extract": extract_log,
+    return {"acquire": acquire_log, "bak_extract": extract.get("detail", ""),
             "bronze_load": load_log, "mark_applied": applied_log}
 
 
