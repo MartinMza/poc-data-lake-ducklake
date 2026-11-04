@@ -62,7 +62,11 @@ from prefect import flow, get_run_logger, task
 from kavos_acquire.defaults import FINNEGANS_SENDER, FINNEGANS_SUBJECT_PATTERN
 from kavos_acquire.download import DEFAULT_MIN_WINDOW_SECONDS
 from kavos_acquire.identity import BackupId, BackupNameError, parse_backup_id
-from kavos_acquire.retention import DEFAULT_KEEP, newest_backup
+from kavos_acquire.retention import (
+    DEFAULT_KEEP,
+    newest_backup,
+    remove_extracted_bak,
+)
 from kavos_acquire.state import load_state
 from kavos_acquire.pipeline import (
     DEFAULT_SINCE_DAYS,
@@ -342,7 +346,9 @@ def bak_extract(bak_path: str | None = None) -> str:
             with src_f, open(dest, "wb") as out_f:
                 shutil.copyfileobj(src_f, out_f)
         os.chmod(dest, 0o644)
+        derivado: Path | None = dest
     else:
+        derivado = None
         dest = backup_dir / src.name
         if dest.exists() and os.path.samefile(src, dest):
             msg = f"bak-extract: {src.name} ya está en ./mssql-backup/, sin copia"
@@ -366,6 +372,11 @@ def bak_extract(bak_path: str | None = None) -> str:
         "--report-json", str(out / "report.json"),
     ]
     _run(cmd, "bak-extract", extra_env=_extractor_env())
+    # Recién después del éxito: el `.bak` derivado se borra y queda un solo
+    # artefacto (el comprimido). Si el extractor falló, se conserva para el
+    # reintento.
+    if derivado is not None:
+        remove_extracted_bak(src, derivado)
     RESTORE_MARK_PATH.parent.mkdir(parents=True, exist_ok=True)
     with open(RESTORE_MARK_PATH, "w", encoding="utf-8") as fh:
         json.dump(current, fh, indent=1)

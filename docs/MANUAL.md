@@ -4,7 +4,7 @@
 > tenés que ver para saber que salió bien. Si algo no coincide, andá directo a
 > [Cuando algo falla](#cuando-algo-falla) y no leas el resto.
 
-**Qué es esto**: un lakehouse local que copia 7 tablas de SQL Server a un Data
+**Qué es esto**: un lakehouse local que copia el catálogo de SQL Server a un Data
 Lake con formato abierto (DuckLake sobre Parquet en S3), y las expone por API
 REST y por MCP. No hay datos generados: lo que ves es lo que vino de SQL Server.
 
@@ -23,7 +23,8 @@ bronze/.venv/bin/python scripts/lake_counts.py             # 2. ¿hay datos?
 Qué esperar:
 
 1. `mssql`, `postgres-catalog`, `garage`, `prefect-server` en `Up (healthy)`. La API puede o no estar: se levanta aparte.
-2. Las **7 tablas `mssql_*`** y ~485.557 filas en total.
+2. Las **tablas `mssql_*`** del catálogo completo (~788 y ~23,2 M de filas en la
+   última corrida verificada).
 3. `39 passed` en ~5 segundos.
 
 Si los tres dan bien, podés saltear el resto del manual y volver cuando
@@ -76,20 +77,19 @@ ya está escuchando en 8000, `lake-api` no arranca.
 
 ---
 
-## Los datos: 7 tablas y nada más
+## Los datos: el catálogo completo de la base
 
-| Tabla | Filas | Qué es |
-|---|---|---|
-| `bronze.mssql_bs_transaccion` | 320.447 | transacciones |
-| `bronze.mssql_bs_operacion` | 148.356 | operaciones (170 columnas) |
-| `bronze.mssql_bs_producto` | 9.342 | productos |
-| `bronze.mssql_d_mart_ventas_producto_cliente` | 4.065 | ventas por producto/cliente |
-| `bronze.mssql_bs_organizacion` | 3.055 | organizaciones |
-| `bronze.mssql_d_mart_ventas` | 275 | resumen de ventas |
-| `bronze.mssql_bs_moneda` | 17 | monedas |
+Bronze contiene **todas las tablas de usuario** de la base restaurada, no un
+subset: el extractor descubre el catálogo y no hay allowlist. Cada carga
+reemplaza cada tabla entera (idempotente, sin ventanas ni modos por tabla).
 
-Bronze contiene solo las 7 tablas `mssql_*`: cada carga reemplaza cada tabla
-entera (idempotente, sin ventanas ni modos por tabla).
+Última corrida verificada (backup del 2026-11-03): **788 tablas y 23.225.319
+filas**. Esos números cambian con cada backup, así que consultalos:
+
+```bash
+bronze/.venv/bin/python scripts/lake_counts.py          # conteo por tabla
+curl -s -H "X-API-Key: $AUTH_API_KEYS" localhost:8000/api/v1/sqlserver/tables
+```
 
 **Regla de nombres**: el cargador normaliza todo a `snake_case`
 (`TransaccionID` → `transaccion_id`). Si buscás un nombre en CamelCase, no está.
@@ -126,7 +126,7 @@ Es **fail-closed**: sin credenciales válidas ninguna request de datos pasa.
 
 | Endpoint | Qué devuelve |
 |---|---|
-| `GET /api/v1/sqlserver/tables` | inventario de las 7 tablas, con filas y columnas |
+| `GET /api/v1/sqlserver/tables` | inventario de tablas del catálogo, con filas y columnas |
 | `GET /api/v1/sqlserver/tables/{tabla}/rows?limit=N` | filas paginadas (`limit` ≤ 1000) |
 | `GET /api/v1/tables` | catálogo observable del lake |
 | `GET /api/v1/snapshots` | snapshots de DuckLake (time travel) |
@@ -372,7 +372,7 @@ Ojo: eso borra usuarios y keys. Los datos del lake no se tocan.
 ## Checklist de sistema sano
 
 - [ ] Los 4 servicios base en `healthy`.
-- [ ] `lake_counts.py` muestra 7 tablas `mssql_*` y ~485.557 filas.
+- [ ] `lake_counts.py` muestra las tablas `mssql_*` del catálogo con filas > 0.
 - [ ] `/health` responde 200 sin credencial.
 - [ ] `/api/v1/sqlserver/tables` responde 401 sin credencial y 200 con key.
 - [ ] `.venv/bin/python -m pytest -q` da 191 passed.

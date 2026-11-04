@@ -122,3 +122,38 @@ def test_directorio_inexistente_es_plan_vacio(tmp_path):
     assert plan.keep == ()
     assert plan.delete == ()
     assert apply_retention(plan) == []
+
+
+def test_borra_el_bak_derivado_y_deja_el_comprimido(tmp_path):
+    """Requisito L10: un solo archivo. El .bak extraído es derivado."""
+    from kavos_acquire.retention import remove_extracted_bak
+
+    archivo = tmp_path / "FAF12_Kavos_2026_11_03_233302_428734.bak.tar.gz"
+    derivado = tmp_path / "FAF12_Kavos_2026_11_03_233302_428734.bak"
+    archivo.write_bytes(b"comprimido")
+    derivado.write_bytes(b"extraido")
+
+    assert remove_extracted_bak(archivo, derivado) is True
+    assert {p.name for p in tmp_path.iterdir()} == {archivo.name}
+
+
+def test_no_borra_el_derivado_si_el_comprimido_ya_no_esta(tmp_path):
+    # Sin el comprimido, el .bak es la única copia: no se toca.
+    from kavos_acquire.retention import remove_extracted_bak
+
+    derivado = tmp_path / "FAF12_Kavos_2026_11_03_233302_428734.bak"
+    derivado.write_bytes(b"unico")
+    faltante = tmp_path / "FAF12_Kavos_2026_11_03_233302_428734.bak.tar.gz"
+
+    assert remove_extracted_bak(faltante, derivado) is False
+    assert derivado.exists()
+
+
+def test_no_borra_si_las_rutas_son_la_misma(tmp_path):
+    from kavos_acquire.retention import remove_extracted_bak
+
+    unico = tmp_path / "FAF12_Kavos_2026_11_03_233302_428734.bak"
+    unico.write_bytes(b"bak suelto que dejo el operador")
+
+    assert remove_extracted_bak(unico, unico) is False
+    assert unico.exists()

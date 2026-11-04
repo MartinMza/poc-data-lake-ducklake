@@ -382,3 +382,52 @@ el mismo estado; hay que elegir uno.
 variables sin enmascarar, así que la app password de Gmail terminó en la salida
 de la sesión. Hay que rotarla. Nunca correr `docker compose config` con la salida
 capturada en un log.
+
+### L13 — Verificación end-to-end real, en Docker
+
+Corrida completa dentro del contenedor `prefect-serve`, con un aviso real de
+Finnegans y la imagen `kavos-lake-pipeline`.
+
+**Resultado**: flujo `Completed`. Números medidos:
+
+| Métrica | Valor |
+|---|---|
+| Artefacto adquirido | `FAF12_Kavos_2026_11_03_233302_428734.bak.tar.gz` (1,208 GB) |
+| Verificación | CRC32 de S3 sobre el archivo completo |
+| Poda | borró el `.bak` del 2026-10-07 (7,5 GB) y luego el derivado (7,66 GB) |
+| Tablas extraídas | 788 |
+| Filas cargadas en Bronze | 23 225 319 |
+| Tiempo de carga | 226,9 s |
+| Tiempo total de la corrida | ~8 min (incluye build de imagen) |
+
+`mssql-backup/` final: **1,2 GB**, un solo artefacto fechado más los dos
+fixtures ignorados.
+
+**Defectos que sólo aparecieron acá, todos corregidos:**
+
+1. `No module named 'pyodbc'`. La imagen instalaba `bronze/requirements.txt` en
+   `bronze/.venv`, que no trae las deps del extractor; el flow corre
+   `python -m bak2parquet` con ese intérprete. `container_init.sh` las instalaba
+   en runtime, `serve.py` no. Ahora se hornean en el build.
+2. **El reintento se perdía para siempre.** La adquisición se consume una sola
+   vez (UID y Message-ID avanzan). Si la extracción falla, el artefacto queda en
+   disco y ninguna corrida posterior lo mira. `bak_path_for` ahora cae al
+   artefacto más nuevo del disco, y la marca de `bak-extract` evita repetir
+   trabajo.
+3. **Ese fallback salteaba la guarda de antigüedad** (corre sólo en `acquire`),
+   así que podía ingerir un backup viejo y retroceder el lago. Ahora compara
+   contra el último aplicado.
+4. **Dos artefactos del mismo backup.** La poda corre en `acquire`, antes de que
+   `bak-extract` descomprima el `.tar.gz`: quedaban 8,9 GB en vez de 1,2 GB.
+   Ahora el `.bak` derivado se borra después de que el extractor tiene éxito, y
+   nunca si el comprimido ya no está (sería la única copia).
+
+**Error de proceso propio**: la primera corrida falló porque compilé la imagen,
+después cambié el código y recreé el contenedor sin recompilar. El contenedor
+corría un `flow.py` sin el fallback.
+
+**Hallazgo colateral**: la documentación afirmaba "7 tablas / 485 557 filas" en
+diez lugares. El catálogo dinámico no tiene allowlist desde el commit
+`009e101`, así que la realidad es 788 tablas / 23 225 319 filas. Se corrigieron
+`README.md` y `docs/MANUAL.md` para describir el catálogo completo y consultar
+los conteos en vez de citarlos de memoria.

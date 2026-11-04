@@ -88,6 +88,29 @@ def plan_retention(directory: str | Path, keep: int = DEFAULT_KEEP) -> Retention
     )
 
 
+def remove_extracted_bak(archive: Path, extracted: Path) -> bool:
+    """Borra el `.bak` que salió de extraer un archivo comprimido.
+
+    Requisito del operador: "dejar un solo archivo backup". La poda corre en
+    `acquire`, o sea **antes** de que `bak-extract` descomprima el `.tar.gz`, así
+    que después de la extracción quedaban dos artefactos del mismo backup
+    (~8,9 GB en vez de 1,2 GB). El archivo comprimido es el artefacto de
+    registro; el `.bak` es derivado y se regenera.
+
+    No toca nada si el comprimido ya no está (entonces el `.bak` sería la única
+    copia) ni si las dos rutas son la misma.
+    """
+    if extracted == archive or not extracted.exists() or not archive.exists():
+        return False
+    try:
+        extracted.unlink()
+    except OSError as exc:
+        logger.warning("no se pudo borrar el derivado %s (%s)", extracted.name, exc)
+        return False
+    logger.info("borrado el .bak derivado %s; queda %s", extracted.name, archive.name)
+    return True
+
+
 def newest_backup(directory: str | Path) -> Path | None:
     """El artefacto de backup más nuevo del directorio, o `None` si no hay.
 

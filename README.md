@@ -7,7 +7,7 @@ con `docker compose`.
 **Estado actual**: la única fuente de datos es **SQL Server** (backup `.bak`
 real restaurado en el contenedor `mssql`). El origen Postgres sintético, las
 capas dbt (`silver`/`gold`) y la capa de serving fueron retirados: el lago
-contiene solo las 7 tablas ingestadas desde SQL Server.
+contiene el catálogo completo de la base ingestado desde SQL Server.
 
 OpenSpec: `openspec/changes/` (proposals, diseños, specs y tasks históricos).
 
@@ -30,10 +30,10 @@ SQL Server (.bak) ──bak2parquet──▶ Parquet ──load_parquet──▶
 | Componente | Qué es | Dir / archivo |
 |---|---|---|
 | Infra | `postgres-catalog` :5433, Garage S3 :3900–3903, `prefect-server` :4200, `mssql` :1433 | `docker-compose.yml`, `scripts/bootstrap.sh` |
-| Origen real | `.bak` de SQL Server restaurado (7 tablas del subset: `BSMoneda`, `BSProducto`, `BSOrganizacion`, `BSTransaccion`, `BSOperacion`, `DMart_Ventas`, `DMart_VentasProductoCliente`) | `mssql-backup/` (gitignored), `scripts/restore_mssql.sh` |
+| Origen real | `.bak` de SQL Server restaurado (catálogo completo, sin allowlist: ~788 tablas, ~23 M filas en la última corrida) | `mssql-backup/` (gitignored), `scripts/restore_mssql.sh` |
 | Adquisición | poller de Gmail → link S3 presignado → descarga verificada a `mssql-backup/` | `orchestration/kavos_acquire/` |
 | Ingesta bronze | `bak2parquet/` (.bak → Parquet) + `bronze/load_parquet.py` (Parquet → DuckLake, reemplazo total) | `bronze/`, `bak2parquet/` |
-| Purga de data de ejemplo | deja solo las 7 tablas reales (dry-run por defecto) | `scripts/purge_sample_data.py` |
+| Purga de data de ejemplo | retira la data sintética y deja solo las tablas reales (dry-run por defecto) | `scripts/purge_sample_data.py` |
 | Orquestación | Flow `kavos-lake-medallion`: restore condicional → ingesta MSSQL | `orchestration/` |
 | Servicio | API REST (FastAPI) + MCP (FastMCP) con auth obligatoria | `src/kavos_lake/` |
 | Operación | backup/restore del lago, time travel, conteos | `scripts/` |
@@ -140,20 +140,23 @@ MCP: `sqlserver_tables`, `list_tables`, `describe_table`, `preview_rows`,
 `lake://sqlserver/tables`. Detalle, configuración de clientes y ejemplos en
 `docs/API.md`.
 
-## Data disponible (subset real de SQL Server)
+## Data disponible (catálogo completo de la base)
 
-| Tabla origen | Filas | Bronze |
-|---|---|---|
-| `BSMoneda` | 17 | `bronze.mssql_bs_moneda` |
-| `BSProducto` | 9 342 | `bronze.mssql_bs_producto` |
-| `BSOrganizacion` | 3 055 | `bronze.mssql_bs_organizacion` |
-| `BSTransaccion` | 320 447 | `bronze.mssql_bs_transaccion` |
-| `BSOperacion` | 148 356 | `bronze.mssql_bs_operacion` |
-| `DMart_Ventas` | 275 | `bronze.mssql_d_mart_ventas` |
-| `DMart_VentasProductoCliente` | 4 065 | `bronze.mssql_d_mart_ventas_producto_cliente` |
+El extractor descubre el catálogo real de la base restaurada: **no hay allowlist
+de tablas**. Cada carga reemplaza cada tabla entera (idempotente) y normaliza
+nombres y columnas a `snake_case`.
 
-Total: 485 557 filas. Cada backup se extrae completo y cada tabla se reemplaza
-entera (idempotente). Tablas y columnas en `snake_case`.
+Última corrida verificada end-to-end en Docker (backup del 2026-11-03):
+
+| Métrica | Valor |
+|---|---|
+| Tablas de usuario extraídas | **788** |
+| Filas totales en Bronze | **23 225 319** |
+| Tiempo de carga a Bronze | 226,9 s |
+
+Los conteos cambian con cada backup: consultalos con
+`bronze/.venv/bin/python scripts/lake_counts.py` o
+`GET /api/v1/sqlserver/tables`, no los cites de memoria.
 
 ## Resultados históricos del PoC (data sintética, ya retirada)
 
@@ -180,7 +183,7 @@ lineal, no materializado. Lectura clave: 50 GB nominales ≈ 5,3 GB de Parquet
 |---|---|
 | Auth | `tests/test_auth.py` 14 tests (key, JWT, expiración, firma inválida, `/health` público, fail-closed) |
 | API/MCP sobre data real | `tests/test_api_mcp.py` 16 tests (bronze-only, inventario SQL Server, paginado, guardrails, tools/recursos) |
-| Ingesta bronze | 7 tablas, 485 557 filas (backup completo → Parquet → reemplazo total por tabla) |
+| Ingesta bronze | 788 tablas, 23 225 319 filas (backup completo → Parquet → reemplazo total por tabla) |
 | Purga de data de ejemplo | `purge_sample_data.py --apply` + re-ejecución idempotente ("nada que purgar") |
 | Backup/restore del lago | dump + espejo + manifold verificado (14/14 conteos en el ciclo histórico) |
 | Time travel | `AT (VERSION => N)` sobre tablas propias del checkscript |
