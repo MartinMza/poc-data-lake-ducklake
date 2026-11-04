@@ -1,9 +1,11 @@
 # KavosLake — API REST (FastAPI) & Servidor MCP (FastMCP)
 
 Capa de servicio para consultar el Data Lake DuckLake, que hoy contiene
-**únicamente la data cargada desde SQL Server** (esquema `bronze`: 7 tablas
-`mssql_*`) más los metadatos internos de dlt. No hay capas dbt (silver/gold)
-ni origen sintético.
+**únicamente la data cargada desde SQL Server**: el catálogo completo de la
+base en el esquema `bronze` (`mssql_*`, ~788 tablas y ~23 M de filas en la
+última corrida verificada). No hay capas dbt (silver/gold), ni origen
+sintético, ni dlt: el cargador escribe Parquet con DuckDB directamente.
+Los conteos cambian con cada backup; consultalos, no los cites de memoria.
 
 Ambas interfaces (HTTP REST y MCP) comparten el mismo motor DuckDB y la misma
 autenticación.
@@ -152,8 +154,8 @@ curl -s -X POST "http://localhost:8000/api/v1/query" \
 
 Herramientas expuestas:
 
-1. `sqlserver_tables()` — inventario de las 7 tablas de SQL Server con filas,
-   columnas y `last_load_id`.
+1. `sqlserver_tables()` — inventario de las tablas del catálogo de SQL Server
+   con filas, columnas y `last_load_id`.
 2. `list_tables(schemas=None)` — tablas del lago (default `bronze`).
 3. `describe_table(schema, table)` — columnas, tipos y muestra.
 4. `preview_rows(table, limit=20, offset=0, schema="bronze")` — página de

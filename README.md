@@ -34,7 +34,8 @@ SQL Server (.bak) ──bak2parquet──▶ Parquet ──load_parquet──▶
 | Adquisición | poller de Gmail → link S3 presignado → descarga verificada a `mssql-backup/` | `orchestration/kavos_acquire/` |
 | Ingesta bronze | `bak2parquet/` (.bak → Parquet) + `bronze/load_parquet.py` (Parquet → DuckLake, reemplazo total) | `bronze/`, `bak2parquet/` |
 | Purga de data de ejemplo | retira la data sintética y deja solo las tablas reales (dry-run por defecto) | `scripts/purge_sample_data.py` |
-| Orquestación | Flow `kavos-lake-medallion`: restore condicional → ingesta MSSQL | `orchestration/` |
+| Orquestación | Flow `kavos-lake-medallion`: `acquire` → `bak-extract` → `bronze-load` | `orchestration/` |
+| Scheduler | `prefect-serve`: sirve el flow cada `ACQUIRE_POLL_HOURS` (default 4 h, cron `0 */4 * * *`), misma imagen que `lake-init`, estado en el volumen `serve-state` | `docker-compose.yml`, `orchestration/serve.py` |
 | Servicio | API REST (FastAPI) + MCP (FastMCP) con auth obligatoria | `src/kavos_lake/` |
 | Operación | backup/restore del lago, time travel, conteos | `scripts/` |
 

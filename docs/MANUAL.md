@@ -35,7 +35,11 @@ necesites tocar algo.
 ## El mapa mental (una sola imagen)
 
 ```
-   .bak de SQL Server (7,5 GB)
+   Gmail (aviso de Finnegans con link S3 presignado)
+            │
+            │  acquire (poller IMAP → descarga verificada a mssql-backup/)
+            ▼
+   mssql-backup/<dump>.bak.tar.gz (~1,2 GB, retención: uno solo)
             │
             │  bak2parquet (restaura temporal, extrae a Parquet, limpia)
             ▼
@@ -52,7 +56,7 @@ necesites tocar algo.
 
 Tres ideas que explican todo lo demás:
 
-- **Un solo camino de datos**: `.bak` → SQL Server → `bronze`. No hay capas
+- **Un solo camino de datos**: Gmail → `mssql-backup/` → SQL Server → `bronze`. No hay capas
   intermedias ni transformaciones de negocio.
 - **Dos bases distintas**: Postgres guarda *metadatos* del catálogo (qué tablas
   y archivos existen), no los datos. Los datos son Parquet en Garage.
@@ -71,6 +75,7 @@ Tres ideas que explican todo lo demás:
 | `prefect-server` | 4200 | UI/API de la orquestación | abrí http://localhost:4200 |
 | `lake-api` | 8000 | API REST + MCP | http://localhost:8000/health → `200` |
 | `lake-init` | — | job de una sola vez: restore + ingesta | corre y termina |
+| `prefect-serve` | — | sirve el flow con schedule (cron de `ACQUIRE_POLL_HOURS`, default cada 4 h) | `docker compose ps prefect-serve` → `Up`; si no baja nada, ver tabla de fallas |
 
 La API y el job de init usan los mismos puertos internos que el host: si algo
 ya está escuchando en 8000, `lake-api` no arranca.
@@ -165,7 +170,7 @@ Eso es por diseño, no un olvido.
 | correr la orquestación | `orchestration/.venv/bin/python orchestration/flow.py` | adquiere el `.bak` del correo; sin `ACQUIRE_*` usa `MSSQL_BAK_PATH` |
 | bajar el backup solo, con schedule | `orchestration/.venv/bin/python orchestration/serve.py` | cron según `ACQUIRE_POLL_HOURS` (default 4 h) |
 | podar backups viejos | `orchestration/.venv/bin/python scripts/prune_backups.py` | deja **un** backup; dry-run por defecto, `--apply` borra |
-| automatizar la ingesta | `docker compose up -d prefect-serve` | exige `ACQUIRE_IMAP_*` en `.env`; corre cada `ACQUIRE_POLL_HOURS` |
+| automatizar la ingesta | `docker compose up -d prefect-serve` | exige `ACQUIRE_IMAP_*` en `.env`; corre cada `ACQUIRE_POLL_HOURS`; tras cambiar código, `build` **antes** de recrear (ver "código viejo" en fallas) |
 | restaurar el `.bak` | `./scripts/restore_mssql.sh <archivo>.bak FAF12_Kavos` | idempotente, usa `REPLACE` |
 | limpiar datos sintéticos viejos | `bronze/.venv/bin/python scripts/purge_sample_data.py` | dry-run por defecto; `--apply` ejecuta |
 | generar una API key | `openssl rand -hex 24` | 24 caracteres mínimo |
@@ -176,6 +181,57 @@ Eso es por diseño, no un olvido.
 El resto (`bootstrap.sh`, `smoke_ducklake.py`, `s3_sync.py`,
 `timetravel_check.py`, `container_init.sh`) es infraestructura: se usa al
 montar el stack o desde Docker, no en el día a día.
+
+---
+
+## La adquisición automática del backup
+
+El flow arranca con `acquire`, antes de `bak-extract`: un poller IMAP lee el
+buzón de Gmail, busca el aviso de `info@finnegans.com.ar` con asunto `Backup
+de Base de Datos Disponible`, saca el link S3 presignado del cuerpo HTML, lo
+descarga (~1,2 GB `.bak.tar.gz`) con resume y verificación CRC32, y recién
+entonces poda el backup anterior. Después sigue `bak-extract` →
+`bronze-load`. Sin `ACQUIRE_IMAP_USER` o `ACQUIRE_LINK_HOSTS`, `acquire` se
+salta en éxito y `bak-extract` usa `MSSQL_BAK_PATH` o el artefacto más nuevo
+en disco: con la adquisición configurada **no** hay que reapuntar
+`MSSQL_BAK_PATH` al `.bak` del día, el flow toma lo que `acquire` trajo.
+
+El scheduler es el servicio `prefect-serve` (`docker compose up -d
+prefect-serve`, `restart: unless-stopped`): reusa la imagen
+`kavos-lake-pipeline` y sirve el flow con un cron derivado de
+`ACQUIRE_POLL_HOURS` (default `0 */4 * * *`). El estado vive en el volumen
+`serve-state`: si se pierde, la guarda de antigüedad olvida el último backup
+aplicado y puede volver a cargar uno viejo. Con el servicio corriendo, no
+lances `flow.py` a mano: compiten por el mismo estado.
+
+`./configure.sh` trae una sección `[5/5]` que pide la cuenta de Gmail, la app
+password (no se muestra al tipearla), la allowlist de hosts, cuántos días
+hacia atrás buscar y cuántos backups dejar; con la cuenta vacía la
+adquisición queda desactivada y seguís cargando el `.bak` a mano.
+`./configure.sh --check` dice si quedó activa o incompleta (una adquisición a
+medias se salta en éxito y no baja nada).
+
+### Variables de la adquisición
+
+| Variable | Default | Qué hace |
+|---|---|---|
+| `ACQUIRE_IMAP_USER` | *(vacío = desactivada)* | cuenta de Gmail que recibe el aviso; vacía → `acquire` se salta en éxito |
+| `ACQUIRE_IMAP_APP_PASSWORD` | *(vacía)* | app password de Gmail (16 caracteres, con verificación en dos pasos; la contraseña normal no sirve para IMAP) |
+| `ACQUIRE_FROM` | `info@finnegans.com.ar` | remitente del aviso, comparado por dirección exacta, no por sufijo |
+| `ACQUIRE_SUBJECT_PATTERN` | `Backup de Base de Datos Disponible` | asunto del aviso, evaluado como regex sobre el Subject |
+| `ACQUIRE_LINK_HOSTS` | *(vacía)* | allowlist de hosts de descarga, separados por comas, sólo `https`; un link de otro host no se baja |
+| `ACQUIRE_POLL_HOURS` | `4` | cada cuántas horas corre el poller; `serve.py` deriva el cron (`0 */4 * * *`) |
+| `ACQUIRE_SINCE_DAYS` | `3` | días hacia atrás que busca en el buzón (`IMAP SINCE`); menor que la validez de la firma (12 h) para no traer correos ya indescargables |
+| `ACQUIRE_KEEP_BACKUPS` | `1` | cuántos artefactos fechados quedan en `mssql-backup/`; `1` = el nuevo reemplaza al anterior tras verificar checksum |
+| `ACQUIRE_MIN_WINDOW_SECONDS` | `1800` | ventana restante mínima exigida a la firma presignada para intentar la descarga; si no alcanza, falla pidiendo un link nuevo |
+| `ACQUIRE_STATE_PATH` | `orchestration/.acquire_state.json` (en compose: `/workspace/state/.acquire_state.json`, volumen `serve-state`) | estado persistido: Message-IDs, UIDs y último backup aplicado (nunca URLs) |
+| `ACQUIRE_INCOMING_DIR` | `mssql-backup/.incoming` | dónde se descarga en vuelo (`.part`); lo que no verifica nunca llega al destino final |
+| `ACQUIRE_FINAL_DIR` | `mssql-backup` | dónde queda commiteado el artefacto verificado |
+
+**Regla de operación**: después de cambiar código, `docker compose build
+prefect-serve` **antes** de `docker compose up -d --force-recreate
+prefect-serve`. Recrear sin buildear deja el contenedor corriendo el código
+viejo, y eso ya costó una ronda de debugging.
 
 ---
 
@@ -205,6 +261,8 @@ Buscá tu síntoma. Si no está acá, el log del servicio suele decir la verdad:
 | *estado corrupto* en `.acquire_state.json` | JSON ilegible | revisarlo a mano; borrarlo **desactiva** la guarda de antigüedad |
 | *espacio insuficiente* | ~7,5 GB por backup sin podar | `prune_backups.py --apply` y reintentar |
 | `gdown`/WeTransfer rechazado | proveedor de link no soportado a propósito | pedir envío por S3 presignado o carpeta SharePoint |
+| *sin tablas en `parquet-out`* | `bak-extract` se saltó (sin `.bak` nuevo) o falló antes de escribir | mirar el log de `bak-extract`: si no hubo `.bak` nuevo no hay nada que cargar; no reintentar sólo la carga |
+| *el contenedor corre código viejo* | se recreó `prefect-serve` sin buildear | `docker compose build prefect-serve` **antes** de `docker compose up -d --force-recreate prefect-serve`, siempre |
 
 ---
 

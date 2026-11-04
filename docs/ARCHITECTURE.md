@@ -53,6 +53,32 @@ inbound ──▶ ports ◀── outbound
 - Una variable de entorno nueva → campo tipado en `Settings` si su tipo importa;
   si no, `env()`.
 
+## Orquestación (fuera del hexágono)
+
+El flow de Prefect no es parte de `src/kavos_lake/` y la regla de dependencia
+de arriba no lo cubre: es un deployable aparte que usa el lago como caja
+negra (subprocesos + env, igual que un operador). El detalle del camino de
+datos está en `orchestration/README.md`; acá sólo el mapa para ubicarse:
+
+```
+orchestration/
+├── flow.py             flow kavos-lake-medallion: acquire → bak-extract → bronze-load
+├── serve.py            sirve el flow con schedule cron (ACQUIRE_POLL_HOURS)
+├── kavos_acquire/      adquisición Gmail → S3 presignado → mssql-backup/
+│   ├── mailbox.py      poller IMAP (SINCE, remitente exacto, asunto, allowlist)
+│   ├── resolvers.py    descarga por host (directo/S3, OneDrive, Drive)
+│   ├── download.py     resume + checksum CRC32 + guarda de ventana y de disco
+│   ├── identity.py     parseo del timestamp del nombre + guarda de antigüedad
+│   ├── state.py        estado JSON atómico (Message-IDs, UIDs, último aplicado)
+│   ├── retention.py    retención 1 (la misma que usa scripts/prune_backups.py)
+│   └── pipeline.py     ensambla las piezas (acquire_latest_bak, mark_applied)
+```
+
+La única comunicación con el servicio es por abajo: el flow escribe Parquet y
+carga Bronze, y la API/MCP lee el catálogo resultante. Nada de
+`orchestration/` importa `src/kavos_lake/`, y nada de `src/` sabe que el flow
+existe.
+
 ## Tests
 
 ```bash
