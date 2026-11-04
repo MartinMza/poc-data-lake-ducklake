@@ -60,6 +60,15 @@ RUN uv venv /workspace/bronze/.venv --python 3.12 \
     && uv venv /workspace/.venv --python 3.12 \
     && uv pip install -p /workspace/.venv/bin/python -r /workspace/requirements.txt
 
+# 4b. Auto-chequeo de dependencias de runtime.
+# El flow corre `python -m bak2parquet` con el intérprete de bronze y
+# `prefect`/`httpx` con el de orchestration. Si falta una, el fallo aparecía
+# recién en la corrida programada (fue exactamente lo que pasó con pyodbc:
+# "No module named 'pyodbc'" a las 12:18 de la noche). Acá rompe el build.
+RUN /workspace/bronze/.venv/bin/python -c "import pyodbc, arrow_odbc, pyarrow, duckdb" \
+    && /workspace/orchestration/.venv/bin/python -c "import prefect, httpx" \
+    && /workspace/.venv/bin/python -c "import fastapi, duckdb"
+
 # 5. Pre-instalar extensiones DuckDB (ducklake, postgres, httpfs) para evitar descargas en runtime
 RUN /workspace/bronze/.venv/bin/python -c "import duckdb; con = duckdb.connect(); con.execute('INSTALL ducklake; INSTALL postgres; INSTALL httpfs;')"
 
