@@ -141,18 +141,24 @@ else
     info "arreglo: docker compose up -d --build lake-api"
   fi
 
-  CODIGO_SALUD="$(curl -s -o /dev/null -m 5 -w '%{http_code}' "http://localhost:${API_PORT:-8000}/health" 2>/dev/null)"
+  # El puerto se lee del contenedor, no del entorno de este script: el `.env`
+  # puede publicar la API en otro puerto (API_PORT=8021, por ejemplo) y entonces
+  # esta guarda reportaba el stack caído mientras el servicio respondía 200.
+  PUERTO_API="$(docker compose port lake-api 8000 2>/dev/null | tail -1 | awk -F: '{print $NF}')"
+  PUERTO_API="${PUERTO_API:-${API_PORT:-8000}}"
+
+  CODIGO_SALUD="$(curl -s -o /dev/null -m 5 -w '%{http_code}' "http://localhost:${PUERTO_API}/health" 2>/dev/null)"
   if [[ "$CODIGO_SALUD" == "200" ]]; then
-    ok "GET /health responde 200"
+    ok "GET /health responde 200 (puerto $PUERTO_API)"
   else
-    mal "GET /health devolvió ${CODIGO_SALUD:-sin respuesta}; 'docker compose logs lake-api'"
+    mal "GET /health devolvió ${CODIGO_SALUD:-sin respuesta} en el puerto $PUERTO_API; 'docker compose logs lake-api'"
   fi
 
   # 401 sin credencial es la respuesta correcta: prueba que falla cerrado, sin
   # manejar secretos en este script.
   CODIGO_MCP="$(curl -s -o /dev/null -m 8 -w '%{http_code}' -X POST \
       -H 'Accept: application/json, text/event-stream' -H 'Content-Type: application/json' \
-      -d '{}' "http://localhost:${API_PORT:-8000}/mcp" 2>/dev/null)"
+      -d '{}' "http://localhost:${PUERTO_API}/mcp" 2>/dev/null)"
   case "$CODIGO_MCP" in
     401) ok "POST /mcp responde 401 sin credencial (fail-closed)" ;;
     000) mal "POST /mcp no responde: el MCP está caído" ;;
