@@ -78,3 +78,39 @@ def test_el_manual_documenta_la_regla_de_rebuild():
     """Recrear el contenedor sin rebuild dejó corriendo código viejo una vez."""
     assert "build" in MANUAL.read_text(encoding="utf-8")
     assert "force-recreate" in MANUAL.read_text(encoding="utf-8")
+
+
+# --- lo mismo, pero para el texto que lee un modelo -------------------------
+#
+# `mcp/server.py` define el `instructions` que el servidor MCP entrega al agente
+# al conectarse, y `duckdb_engine.py` documenta el inventario. Ahí decía "las 7
+# tablas reales (mssql_bs_* y mssql_d_mart_*) más los metadatos de dlt": un
+# agente arrancaba con una premisa falsa sobre el contenido del lago, y la
+# herramienta prometía una frescura (`_dlt_load_id`) que el loader actual no
+# escribe.
+
+FUENTES_QUE_LEE_UN_MODELO = (
+    RAIZ / "src" / "kavos_lake" / "adapters" / "inbound" / "mcp" / "server.py",
+    RAIZ / "src" / "kavos_lake" / "adapters" / "outbound" / "duckdb_engine.py",
+)
+
+
+def test_las_instrucciones_del_mcp_no_describen_un_subset():
+    obsoletos = (
+        "7 tablas",
+        "siete tablas",
+        "mssql_bs_*",
+        "mssql_d_mart_*",
+        "metadatos de dlt",
+    )
+
+    for archivo in FUENTES_QUE_LEE_UN_MODELO:
+        if not archivo.is_file():
+            continue
+        texto = archivo.read_text(encoding="utf-8")
+        encontrados = [token for token in obsoletos if token in texto]
+        assert not encontrados, (
+            f"{archivo.name} describe un subset del lago ({encontrados}). Es el "
+            f"texto que lee el agente al conectarse: tiene que decir que el "
+            f"catálogo es completo y que los conteos se consultan."
+        )

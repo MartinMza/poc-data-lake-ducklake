@@ -336,7 +336,8 @@ def list_sqlserver_tables():
     """Inventario de las tablas cargadas desde SQL Server.
 
     Devuelve por tabla: filas, cantidad de columnas, columnas y el último
-    `_dlt_load_id` (marca de la corrida de ingesta más reciente).
+    la frescura de la última escritura (`last_load_id` y `last_load_at`,
+    tomados de los snapshots de DuckLake).
     """
     try:
         return engine.sqlserver_tables()
