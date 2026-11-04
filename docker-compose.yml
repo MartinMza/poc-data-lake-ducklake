@@ -6,6 +6,11 @@
 #
 # Todos los puertos y hosts están parametrizados por variables de entorno (ver .env / .env.example).
 
+# Nombre de proyecto explícito. Sin esto se deriva del directorio del repo y los
+# volúmenes quedan con otro prefijo (`dulse_*`): el rename del proyecto a medias
+# dejaba contenedores `kavos-lake-*` sobre volúmenes `dulse_*`.
+name: kavos-lake
+
 services:
   postgres-catalog:
     image: postgres:17.6-bookworm
