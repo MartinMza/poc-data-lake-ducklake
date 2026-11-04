@@ -592,3 +592,32 @@ Moraleja que se repite en esta sesión: **cada camino nuevo que ingiere necesita
 la misma retención y la misma marca que el camino feliz.** El de bootstrap
 existía desde antes y nadie lo había mirado porque no se lo ejercitaba: recién
 al reconstruir todo desde cero se vio.
+
+### L18 — El fix del bootstrap no se ejecutó: imagen vieja
+
+Al re-ejecutar `lake-init` después de commitear el arreglo de retención, el
+resultado fue idéntico al defecto: `mssql-backup/` en 8,3 GB con el `.bak`
+derivado y ninguna línea `Bootstrap:` en el log. El script nunca corrió la
+finalización.
+
+Causa: `docker compose up -d` **no reconstruye**. El contenedor ejecutó la
+imagen `kavos-lake-pipeline:latest` construida antes del arreglo. Probado:
+
+```
+sha256 del repo:  e01d5e23...
+sha256 en imagen: b19c3962...
+grep "Aplicando retención" en la imagen -> 0
+```
+
+Es el mismo defecto de L14 (recrear sin rebuild) en otro lugar, y la guarda
+existente no lo cubría: comparaba `flow.py`, `serve.py`, `pipeline.py` y
+`retention.py` contra el contenedor de `prefect-serve`, pero `lake-init` termina
+y su contenedor no se puede inspeccionar. Ahora `verify_stack.sh` compara
+`scripts/container_init.sh` contra la **imagen**, que existe siempre. Se verificó
+que falla con el estado actual antes de arreglarlo.
+
+**El error de método, que es lo que importa.** En L17 acepté como evidencia verde
+del worker que había ejecutado *el bloque Python extraído a mano*. Eso prueba que
+la lógica es correcta; no prueba que el script la ejecute. Lógica verificada y
+despliegue verificado son dos cosas distintas, y sólo la primera estaba cubierta.
+La prueba real llegó recién al correr el bootstrap de verdad.

@@ -63,6 +63,22 @@ if [[ "$ESTADO" == "running" ]]; then
     info "arreglo: docker compose build $SERVICIO && docker compose up -d --force-recreate $SERVICIO"
   fi
 
+  # 3b. El script de bootstrap dentro de la imagen.
+  # `docker compose up -d` NO reconstruye: el contenedor corre la imagen que ya
+  # existe. El arreglo de retención del bootstrap estuvo commiteado y sin efecto
+  # durante una corrida entera por esto, y nada lo detectó: los otros cuatro
+  # archivos se comparaban contra el contenedor, pero lake-init sale enseguida y
+  # no se puede inspeccionar. Se compara contra la imagen, que existe siempre.
+  IMAGEN_PIPELINE="$(docker inspect -f '{{.Config.Image}}' kavos-lake-init 2>/dev/null || echo kavos-lake-pipeline:latest)"
+  HOST_INIT="$(sha256sum scripts/container_init.sh | cut -d' ' -f1)"
+  IMG_INIT="$(docker run --rm --entrypoint sha256sum "$IMAGEN_PIPELINE" /workspace/scripts/container_init.sh 2>/dev/null | cut -d' ' -f1)"
+  if [[ "$HOST_INIT" == "$IMG_INIT" ]]; then
+    ok "el bootstrap de la imagen coincide con el repo"
+  else
+    mal "el bootstrap de $IMAGEN_PIPELINE no coincide con el repo: el arranque corre código viejo"
+    info "arreglo: docker compose build lake-init && docker compose up -d lake-init"
+  fi
+
   # 4. dependencias del extractor dentro de la imagen
   if docker compose exec -T "$SERVICIO" /workspace/bronze/.venv/bin/python \
        -c "import pyodbc, arrow_odbc, pyarrow, duckdb" 2>/dev/null; then
