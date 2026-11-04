@@ -83,14 +83,23 @@ services:
     image: kavos-lake-mssql:2022-CU27
     container_name: kavos-lake-mssql
     restart: unless-stopped
+    # S1 (bak2parquet): techo físico del motor efímero — cgroup 1600 MB, 1.5 CPUs
+    # y límite de proceso 1300 MB; `max server memory=1024` lo fija la herramienta.
+    mem_limit: 1600m
+    cpus: 1.5
     environment:
       ACCEPT_EULA: "Y"
       MSSQL_PID: Developer
+      MSSQL_MEMORY_LIMIT_MB: "1300"
       MSSQL_SA_PASSWORD: "${MSSQL_SA_PASSWORD:-Str0ng!PoC-Local01}"
     ports:
       - "${MSSQL_PORT:-1433}:${MSSQL_INTERNAL_PORT:-1433}"
     volumes:
       - ./mssql-backup:/var/opt/mssql/backup
+      # Los datos del motor van a un volumen nombrado: sin esto el
+      # directorio es container-local y recrear el servicio (para aplicar
+      # mem_limit/cpus) borra las bases restauradas a mano.
+      - mssql-data:/var/opt/mssql
     healthcheck:
       test: ["CMD-SHELL", "/opt/mssql-tools18/bin/sqlcmd -S localhost,${MSSQL_INTERNAL_PORT:-1433} -U ${MSSQL_USER:-sa} -P \"$$MSSQL_SA_PASSWORD\" -Q \"SELECT 1\" -C -l 5 > /dev/null 2>&1"]
       interval: 10s
@@ -196,6 +205,7 @@ services:
       start_period: 10s
 
 volumes:
+  mssql-data:
   pgcatalog-data:
   garage-meta:
   garage-data:
