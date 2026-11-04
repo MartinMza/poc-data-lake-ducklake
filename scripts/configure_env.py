@@ -203,6 +203,7 @@ def generate_merged_env(template_path: Path, current_values: dict[str, str]) -> 
     cada variable por el valor actual/elegido, conservando comentarios y orden.
     """
     lines: list[str] = []
+    emitidas: set[str] = set()
     with open(template_path, "r", encoding="utf-8") as f:
         for line in f:
             raw = line.rstrip("\r\n")
@@ -210,10 +211,28 @@ def generate_merged_env(template_path: Path, current_values: dict[str, str]) -> 
             if stripped and not stripped.startswith("#") and "=" in stripped:
                 key, _ = stripped.split("=", 1)
                 key = key.strip()
+                emitidas.add(key)
                 val = current_values.get(key, "")
                 lines.append(f"{key}={val}")
             else:
                 lines.append(raw)
+
+    # Claves que vienen del .env y no están en la plantilla: se conservan.
+    # Antes se descartaban en silencio, así que cualquier valor agregado a mano
+    # (o una variable nueva que todavía no llegó a .env.example) desaparecía sin
+    # aviso. Un asistente que pregunta y después tira la respuesta es peor que
+    # uno que no pregunta.
+    extra = [
+        (k, v)
+        for k, v in current_values.items()
+        if k not in emitidas and str(v).strip()
+    ]
+    if extra:
+        lines.append("")
+        lines.append("# --- Claves presentes en .env y ausentes en .env.example ---")
+        lines.append("# Conservadas para no perder configuración; pasalas a la plantilla.")
+        lines.extend(f"{k}={v}" for k, v in sorted(extra))
+
     return "\n".join(lines) + "\n"
 
 
