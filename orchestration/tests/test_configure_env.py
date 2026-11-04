@@ -15,6 +15,7 @@ Los tests usan plantillas sintéticas en `tmp_path`, nunca el `.env` real.
 
 from __future__ import annotations
 
+import subprocess
 import sys
 from pathlib import Path
 
@@ -94,3 +95,65 @@ def test_las_credenciales_de_adquisicion_sobreviven_a_un_merge(tmp_path):
     assert claves["ACQUIRE_IMAP_APP_PASSWORD"] == "x" * 16
     assert claves["ACQUIRE_LINK_HOSTS"] == valores["ACQUIRE_LINK_HOSTS"]
     assert claves["ACQUIRE_KEEP_BACKUPS"] == "1"
+
+
+# --- valores con espacios: el .env generado tiene que ser "sourceable" --------
+#
+# Defecto real: ACQUIRE_SUBJECT_PATTERN=Backup de Base de Datos Disponible se
+# escribía sin comillas, así que `set -a; source .env` dejaba la variable en
+# "Backup" y trataba el resto como comandos. Nadie lo notaba porque el filtro
+# IMAP matchea por subcadena.
+
+PLANTILLA_ADQUISICION = """# comentario de cabecera
+ACQUIRE_SUBJECT_PATTERN=
+ACQUIRE_IMAP_USER=
+"""
+
+
+def _generar(tmp_path, valores):
+    from configure_env import generate_merged_env
+
+    plantilla = tmp_path / ".env.example"
+    plantilla.write_text(PLANTILLA_ADQUISICION, encoding="utf-8")
+    return generate_merged_env(plantilla, valores)
+
+
+def test_un_valor_con_espacios_sobrevive_a_source(tmp_path):
+    asunto = "Backup de Base de Datos Disponible"
+    contenido = _generar(tmp_path, {"ACQUIRE_SUBJECT_PATTERN": asunto})
+
+    destino = tmp_path / ".env"
+    destino.write_text(contenido, encoding="utf-8")
+    resultado = subprocess.run(
+        ["bash", "-c", f'set -a; source "{destino}"; printf "%s" "$ACQUIRE_SUBJECT_PATTERN"'],
+        capture_output=True, text=True, check=False,
+    )
+
+    assert resultado.returncode == 0, resultado.stderr
+    assert resultado.stdout == asunto
+    assert "orden no encontrada" not in resultado.stderr
+
+
+def test_un_valor_simple_se_escribe_sin_comillas(tmp_path):
+    contenido = _generar(tmp_path, {"ACQUIRE_IMAP_USER": "mail.drive.mm@gmail.com"})
+
+    assert "ACQUIRE_IMAP_USER=mail.drive.mm@gmail.com" in contenido
+
+
+def test_un_valor_con_comilla_simple_cae_a_comillas_dobles(tmp_path):
+    contenido = _generar(tmp_path, {"ACQUIRE_SUBJECT_PATTERN": "Backup d'Base"})
+
+    assert 'ACQUIRE_SUBJECT_PATTERN="Backup d\'Base"' in contenido
+
+
+def test_un_valor_con_dolar_no_se_expande_al_hacer_source(tmp_path):
+    contenido = _generar(tmp_path, {"ACQUIRE_IMAP_APP_PASSWORD": "abc$HOME(def)"})
+
+    destino = tmp_path / ".env"
+    destino.write_text(contenido, encoding="utf-8")
+    resultado = subprocess.run(
+        ["bash", "-c", f'set -a; source "{destino}"; printf "%s" "$ACQUIRE_IMAP_APP_PASSWORD"'],
+        capture_output=True, text=True, check=False,
+    )
+
+    assert resultado.stdout == "abc$HOME(def)"

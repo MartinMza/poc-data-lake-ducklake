@@ -197,6 +197,37 @@ def parse_env_file(path: Path) -> dict[str, str]:
     return values
 
 
+_VALOR_SIN_ESCAPES = re.compile(r"^[A-Za-z0-9_@%+=:,./-]*$")
+
+
+def _formatear_valor(valor: str) -> str:
+    """Escribe un valor de `.env` para que lo lean igual bash y docker compose.
+
+    Sin comillas, un valor con espacios se corta en el primero y el resto se
+    interpreta como comando. Pasó con
+    `ACQUIRE_SUBJECT_PATTERN=Backup de Base de Datos Disponible`: al hacer
+    `source .env` la variable quedaba en "Backup" y bash intentaba ejecutar
+    "de", "Base"... La corrida seguía porque el filtro IMAP matchea por
+    subcadena, así que el defecto era invisible hasta que el asunto cambiara.
+
+    Las comillas **simples** son las únicas que los dos lectores tratan igual:
+    bash no expande nada dentro de ellas y compose las quita sin expandir. Con
+    comillas dobles habría que escapar `$`, y compose no interpreta la barra
+    invertida: el valor quedaría distinto según quién lo lea.
+
+    Si el valor trae una comilla simple no se puede usar la forma segura; ahí
+    se cae a comillas dobles escapando la barra invertida y la comilla doble.
+    En ese rincón, un `$` literal se expandiría al hacer `source`: es el único
+    caso que queda sin cubrir y por eso el valor se inspecciona antes.
+    """
+    if _VALOR_SIN_ESCAPES.match(valor):
+        return valor
+    if "'" not in valor:
+        return f"'{valor}'"
+    escapado = valor.replace("\\", "\\\\").replace('"', '\\"')
+    return f'"{escapado}"'
+
+
 def generate_merged_env(template_path: Path, current_values: dict[str, str]) -> str:
     """
     Toma la plantilla .env.example y genera el contenido final reemplazando
@@ -213,7 +244,7 @@ def generate_merged_env(template_path: Path, current_values: dict[str, str]) -> 
                 key = key.strip()
                 emitidas.add(key)
                 val = current_values.get(key, "")
-                lines.append(f"{key}={val}")
+                lines.append(f"{key}={_formatear_valor(str(val))}")
             else:
                 lines.append(raw)
 
@@ -231,7 +262,7 @@ def generate_merged_env(template_path: Path, current_values: dict[str, str]) -> 
         lines.append("")
         lines.append("# --- Claves presentes en .env y ausentes en .env.example ---")
         lines.append("# Conservadas para no perder configuración; pasalas a la plantilla.")
-        lines.extend(f"{k}={v}" for k, v in sorted(extra))
+        lines.extend(f"{k}={_formatear_valor(str(v))}" for k, v in sorted(extra))
 
     return "\n".join(lines) + "\n"
 
