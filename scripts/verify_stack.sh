@@ -8,6 +8,9 @@
 #   4. las dependencias del extractor están en la imagen
 #   5. el estado persistido es legible
 #   6. la retención dejó un solo artefacto fechado
+#   7. la API REST y el MCP están arriba y sirven el código actual
+#      (nadie avisaba cuando estaban caídos: el MCP quedaba inaccesible
+#      en /mcp/sse sin que ninguna verificación lo notara)
 #
 # Uso: ./scripts/verify_stack.sh   (exit 0 = todo bien, 1 = hay fallas)
 # No imprime secretos: nunca corre `docker compose config` sin --quiet.
@@ -98,6 +101,46 @@ case "$FECHADOS" in
   1) ok  "mssql-backup/ tiene exactamente un artefacto fechado" ;;
   *) mal "mssql-backup/ tiene $FECHADOS artefactos fechados (se esperaba 1); corré scripts/prune_backups.py --apply" ;;
 esac
+
+# --- lake-api: REST + MCP ---------------------------------------------------
+# El MCP vive en /mcp/sse del mismo servicio. Estuvo cuatro días caído sin que
+# nada lo detectara: por eso se verifica acá.
+ESTADO_API="$(docker compose ps lake-api --format '{{.State}}' 2>/dev/null | head -1)"
+if [[ "$ESTADO_API" != "running" ]]; then
+  mal "lake-api no está corriendo: el MCP en /mcp/sse queda inaccesible; 'docker compose up -d lake-api'"
+else
+  API_DESACTUALIZADOS=0
+  for archivo in src/kavos_lake/adapters/inbound/mcp/server.py \
+                 src/kavos_lake/adapters/outbound/duckdb_engine.py; do
+    HOST_SHA="$(sha256sum "$archivo" | cut -d' ' -f1)"
+    CONT_SHA="$(docker compose exec -T lake-api sha256sum "/app/$archivo" 2>/dev/null | cut -d' ' -f1)"
+    if [[ "$HOST_SHA" != "$CONT_SHA" ]]; then
+      mal "código viejo en lake-api: $archivo"
+      API_DESACTUALIZADOS=$((API_DESACTUALIZADOS + 1))
+    fi
+  done
+  if (( API_DESACTUALIZADOS == 0 )); then
+    ok "el código de lake-api coincide con el repo"
+  else
+    info "arreglo: docker compose up -d --build lake-api"
+  fi
+
+  CODIGO_SALUD="$(curl -s -o /dev/null -m 5 -w '%{http_code}' "http://localhost:${API_PORT:-8000}/health" 2>/dev/null)"
+  if [[ "$CODIGO_SALUD" == "200" ]]; then
+    ok "GET /health responde 200"
+  else
+    mal "GET /health devolvió ${CODIGO_SALUD:-sin respuesta}; 'docker compose logs lake-api'"
+  fi
+
+  # 401 sin credencial es la respuesta correcta: prueba que el MCP está arriba
+  # y que falla cerrado, sin necesidad de manejar secretos en este script.
+  CODIGO_MCP="$(curl -s -o /dev/null -m 8 -w '%{http_code}' "http://localhost:${API_PORT:-8000}/mcp/sse" 2>/dev/null)"
+  case "$CODIGO_MCP" in
+    401) ok "GET /mcp/sse responde 401 sin credencial (arriba y fail-closed)" ;;
+    000) mal "GET /mcp/sse no responde: el MCP está caído" ;;
+    *)   info "GET /mcp/sse devolvió $CODIGO_MCP (se esperaba 401 sin credencial)" ;;
+  esac
+fi
 
 echo
 if (( FALLAS == 0 )); then

@@ -467,3 +467,56 @@ registraría como aplicado algo que no entró al lago.
 Queda documentado un límite conocido: la guarda sólo tiene referencia después
 de la primera extracción real. Si el estado se pierde, hay que reseedarlo; el
 script de siembra es tres líneas sobre `mark_applied`.
+
+### L15 — El MCP estaba caído y mentía en las instrucciones
+
+**Origen.** Pregunta del usuario: "¿está corriendo el MCP?". No: el servicio
+`lake-api` (REST + MCP en `/mcp/sse`) nunca se levantó después del rename del
+proyecto. Quedaba un `dulse-lake-api` apagado hacía 4 días, con el nombre viejo.
+
+**Defecto 1 — instrucciones falsas al agente.** `mcp/server.py` entrega un
+`instructions` que el agente lee al conectarse; decía "esquema bronze:
+`mssql_bs_*` y `mssql_d_mart_*`… las 7 tablas reales más los metadatos de dlt".
+Levantarlo así habría arrancado a cualquier agente con una premisa falsa sobre
+el contenido del lago. Es la misma deriva de L14, pero en código: el test de
+L14 sólo miraba `README/MANUAL/API.md`. Ahora cubre también las fuentes que lee
+un modelo (`mcp/server.py`, `duckdb_engine.py`).
+
+**Defecto 2 — la frescura no existía.** `sqlserver_tables()` documentaba
+`last_load_id` para saber si una tabla estaba fresca, y lo leía de
+`_dlt_load_id`. Verificado contra el catálogo: **0 de 788** tablas `mssql_*`
+tienen esa columna, porque el loader actual escribe Parquet con DuckDB y dlt se
+retiró. Devolvía `None` en todas, sin error.
+
+Peor: `tests/test_api_mcp.py` **afirmaba que `None` era lo esperado**. El test
+cuidaba el defecto. Eso apareció al correr el suite completo, no por leer el
+código.
+
+Corrección: la frescura sale de los snapshots de DuckLake, que es el registro
+real de escrituras. Como la ingesta reemplaza la tabla entera (drop + create),
+el último snapshot que la creó es su última escritura. `last_load_id` pasa a
+llevar el snapshot y se agrega `last_load_at`. Sin cambio de formato de datos.
+
+Cubierto por `tests/test_frescura_inventario.py`, contra un catálogo DuckLake
+temporal de verdad: tabla escrita una vez, tabla recreada (gana el snapshot más
+reciente), varias tablas, y lago sin escrituras.
+
+**Defecto 3 — `.env` no era "sourceable".** `configure_env.py` escribía
+`clave=valor` sin comillas. `ACQUIRE_SUBJECT_PATTERN=Backup de Base de Datos
+Disponible` hacía que `set -a; source .env` dejara la variable en `Backup` y
+tratara `de`, `Base`… como comandos. Invisible porque el filtro IMAP matchea por
+subcadena. Ahora se citan los valores que lo necesitan, con **comillas simples**:
+son las únicas que bash y docker compose tratan igual (compose las quita sin
+expandir, bash no expande nada adentro). Verificado con los dos lectores y con
+un contenedor real.
+
+**Guarda de servicio.** `scripts/verify_stack.sh` ahora cubre `lake-api`:
+corriendo, `/health` 200, `/mcp/sse` 401 sin credencial (arriba y fail-closed,
+sin manejar secretos en el script) y código del contenedor igual al repo. Nadie
+avisaba cuando la API estaba caída; ahora el script falla.
+
+**Verificación en vivo.** Handshake MCP real con `fastmcp`: 6 herramientas
+(`sqlserver_tables`, `list_tables`, `describe_table`, `preview_rows`,
+`run_query`, `list_snapshots`), `preview_rows(mssql_bs_moneda, 2)` y
+`describe_table` devolviendo datos reales, e `instructions` nuevas servidas por
+el contenedor.
