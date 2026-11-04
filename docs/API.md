@@ -23,7 +23,7 @@ URLs:
 
 - **Swagger UI**: <http://localhost:8000/docs>
 - **Healthcheck (público)**: <http://localhost:8000/health>
-- **MCP SSE**: `http://localhost:8000/mcp/sse`
+- **MCP (Streamable HTTP)**: `http://localhost:8000/mcp`
 
 `run_api.sh` valida la configuración de auth antes de arrancar y aborta con
 instrucciones si falta (fail-closed).
@@ -186,9 +186,9 @@ Recursos: `lake://catalog` (inventario del lago) y `lake://sqlserver/tables`
 }
 ```
 
-### Clientes HTTP / SSE (con auth)
+### Clientes MCP (con auth)
 
-Apuntá el cliente a `http://localhost:8000/mcp/sse` y enviá el header
+Apuntá el cliente a `http://localhost:8000/mcp` (Streamable HTTP) y enviá el header
 `X-API-Key: <key>` (o `Authorization: Bearer <jwt>`) en todas las requests.
 Sin credencial el endpoint responde `401`.
 

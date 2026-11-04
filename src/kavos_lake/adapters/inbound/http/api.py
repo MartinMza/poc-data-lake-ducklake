@@ -88,6 +88,22 @@ def cors_config() -> tuple[list[str], bool]:
     return origins, credentials
 
 
+# Sub-app del MCP. Se crea acá para poder componer su lifespan con el nuestro:
+# el transporte Streamable HTTP mantiene un session manager que arranca en el
+# lifespan del sub-app. Sin pasarlo, el arranque parece sano pero cada request
+# falla con "task group was not initialized" (fue exactamente lo que pasó al
+# cambiar de SSE a Streamable HTTP).
+_mcp_app = mcp.http_app(transport="http", path="/")
+
+
+@asynccontextmanager
+async def _lifespan_con_mcp(app: FastAPI):
+    """Lifespan propio + el del MCP, en ese orden y anidados."""
+    async with lifespan(app):
+        async with _mcp_app.lifespan(app):
+            yield
+
+
 app = FastAPI(
     title="KavosLake Data Platform API & MCP",
     version="1.0.0",
@@ -96,7 +112,7 @@ app = FastAPI(
     docs_url=None,
     redoc_url=None,
     openapi_url=None,
-    lifespan=lifespan,
+    lifespan=_lifespan_con_mcp,
     description=(
         "API REST y servidor MCP para consultar la data cargada desde SQL Server "
         "en el DuckLake (esquema bronze, tablas mssql_*, con Time Travel). "
@@ -120,8 +136,18 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Montar servidor FastMCP con transporte SSE bajo /mcp
-app.mount("/mcp", mcp.http_app(transport="sse"))
+# Montar servidor FastMCP bajo /mcp con transporte Streamable HTTP.
+#
+# Antes era SSE (`transport="sse"`). SSE quedó legacy y los clientes actuales
+# lo rechazan: Antigravity, por ejemplo, exige Streamable HTTP para servidores
+# remotos. Con `path="/"` la ruta pública queda exactamente `/mcp`, sin el
+# `/mcp/mcp` que sale si se deja el path interno por defecto, y sin barra final
+# (un redirect 307 en un POST rompe a varios clientes).
+#
+# Detrás de nginx: `location /mcp` con proxy_pass al mismo path, sin reescribir,
+# `proxy_buffering off` para que el stream no se acumule y `proxy_read_timeout`
+# alto porque `sqlserver_tables` recorre las 788 tablas del catálogo.
+app.mount("/mcp", _mcp_app)
 
 # Panel de acceso: HTML server-side (Jinja2) + fragmentos HTMX.
 app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")

@@ -10,7 +10,7 @@
 #   6. la retención dejó un solo artefacto fechado
 #   7. la API REST y el MCP están arriba y sirven el código actual
 #      (nadie avisaba cuando estaban caídos: el MCP quedaba inaccesible
-#      en /mcp/sse sin que ninguna verificación lo notara)
+#      en /mcp sin que ninguna verificación lo notara)
 #
 # Uso: ./scripts/verify_stack.sh   (exit 0 = todo bien, 1 = hay fallas)
 # No imprime secretos: nunca corre `docker compose config` sin --quiet.
@@ -103,11 +103,11 @@ case "$FECHADOS" in
 esac
 
 # --- lake-api: REST + MCP ---------------------------------------------------
-# El MCP vive en /mcp/sse del mismo servicio. Estuvo cuatro días caído sin que
+# El MCP vive en /mcp (Streamable HTTP) del mismo servicio. Estuvo días caído sin que
 # nada lo detectara: por eso se verifica acá.
 ESTADO_API="$(docker compose ps lake-api --format '{{.State}}' 2>/dev/null | head -1)"
 if [[ "$ESTADO_API" != "running" ]]; then
-  mal "lake-api no está corriendo: el MCP en /mcp/sse queda inaccesible; 'docker compose up -d lake-api'"
+  mal "lake-api no está corriendo: el MCP en /mcp queda inaccesible; 'docker compose up -d lake-api'"
 else
   API_DESACTUALIZADOS=0
   for archivo in src/kavos_lake/adapters/inbound/mcp/server.py \
@@ -132,14 +132,27 @@ else
     mal "GET /health devolvió ${CODIGO_SALUD:-sin respuesta}; 'docker compose logs lake-api'"
   fi
 
-  # 401 sin credencial es la respuesta correcta: prueba que el MCP está arriba
-  # y que falla cerrado, sin necesidad de manejar secretos en este script.
-  CODIGO_MCP="$(curl -s -o /dev/null -m 8 -w '%{http_code}' "http://localhost:${API_PORT:-8000}/mcp/sse" 2>/dev/null)"
+  # 401 sin credencial es la respuesta correcta: prueba que falla cerrado, sin
+  # manejar secretos en este script.
+  CODIGO_MCP="$(curl -s -o /dev/null -m 8 -w '%{http_code}' -X POST \
+      -H 'Accept: application/json, text/event-stream' -H 'Content-Type: application/json' \
+      -d '{}' "http://localhost:${API_PORT:-8000}/mcp" 2>/dev/null)"
   case "$CODIGO_MCP" in
-    401) ok "GET /mcp/sse responde 401 sin credencial (arriba y fail-closed)" ;;
-    000) mal "GET /mcp/sse no responde: el MCP está caído" ;;
-    *)   info "GET /mcp/sse devolvió $CODIGO_MCP (se esperaba 401 sin credencial)" ;;
+    401) ok "POST /mcp responde 401 sin credencial (fail-closed)" ;;
+    000) mal "POST /mcp no responde: el MCP está caído" ;;
+    *)   info "POST /mcp devolvió $CODIGO_MCP (se esperaba 401 sin credencial)" ;;
   esac
+
+  # El middleware de auth responde 401 ANTES de rutear, así que un mount roto
+  # también daría 401 y el chequeo de arriba pasaría igual. Esto verifica que la
+  # ruta exista de verdad en la app.
+  RUTAS_MCP="$(docker compose exec -T lake-api python -c \
+      "from kavos_lake.adapters.inbound.http.api import app; print(','.join(getattr(r, 'path', '') or '' for r in app.routes))" 2>/dev/null | tr -d '\r')"
+  if [[ ",$RUTAS_MCP," == *",/mcp,"* ]]; then
+    ok "el MCP está montado en /mcp"
+  else
+    mal "el MCP no está montado en /mcp (rutas: ${RUTAS_MCP:-no se pudo leer})"
+  fi
 fi
 
 echo

@@ -147,8 +147,36 @@ Dos defensas que conviene conocer:
 
 | Transporte | Cómo se autentica | Cuándo usarlo |
 |---|---|---|
-| HTTP/SSE en `http://localhost:8000/mcp/sse` | header `X-API-Key` o Bearer | agentes y clientes remotos |
+| Streamable HTTP en `http://localhost:8000/mcp` | header `X-API-Key` o Bearer | agentes y clientes remotos (Antigravity, Cursor, nginx) |
 | stdio: `python -m kavos_lake.adapters.inbound.mcp.server` | **sin auth** (corre como tu proceso) | Claude Desktop y similares en tu máquina |
+
+### Exponer el MCP por nginx
+
+El transporte es Streamable HTTP, así que un proxy inverso alcanza con
+`proxy_pass`. Tres detalles que no son opcionales:
+
+```nginx
+location /mcp {
+    proxy_pass http://127.0.0.1:8000/mcp;   # sin reescribir el path
+    proxy_http_version 1.1;
+    proxy_set_header Host $host;
+    proxy_set_header X-API-Key $http_x_api_key;   # propaga la credencial
+
+    # El MCP responde en streaming: sin esto nginx acumula y el cliente se cuelga.
+    proxy_buffering off;
+    proxy_cache off;
+    # `sqlserver_tables` recorre las 788 tablas del catálogo: tarda minutos.
+    proxy_read_timeout 600s;
+    proxy_send_timeout 600s;
+}
+```
+
+Si escalás a más de una réplica, el Streamable HTTP mantiene sesión por cliente:
+necesitás afinidad (sticky sessions) o `stateless_http=True` en el sub-app.
+
+El cliente apunta a `https://<host>/mcp` con el header `X-API-Key`. Las API keys
+viven en la base de credenciales, no en el `.env`, y vencen a los 180 días como
+máximo: hay que rotarlas antes.
 
 Herramientas: `sqlserver_tables`, `list_tables`, `describe_table`,
 `preview_rows`, `run_query`, `list_snapshots`.
