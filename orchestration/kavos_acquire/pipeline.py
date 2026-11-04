@@ -25,7 +25,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from urllib.parse import urlsplit
 
@@ -50,12 +50,17 @@ from kavos_acquire.mailbox import (
     scan_mailbox,
 )
 from kavos_acquire.resolvers import UnsupportedLinkHost, resolve
+from kavos_acquire.retention import DEFAULT_KEEP, apply_retention, plan_retention
 from kavos_acquire.state import AcquireState, load_state, save_state
 
 logger = logging.getLogger(__name__)
 
 STATUS_ACQUIRED = "acquired"
 STATUS_NOTHING = "no_new_backup"
+
+# Ventana de búsqueda en el buzón (requisito L10: filtrar por fecha). Menor que
+# la firma de 12 h: un aviso más viejo ya no se puede descargar.
+DEFAULT_SINCE_DAYS = 3
 
 
 class AcquisitionFailed(RuntimeError):
@@ -101,6 +106,19 @@ def _elegir(candidatos: list[LinkCandidate]) -> tuple[LinkCandidate | None, Back
     return mejor[0], mejor[1], "; ".join(problemas)
 
 
+def _podar(directorio: str | Path, keep: int) -> list[Path]:
+    """Spec S8 (L10): deja un solo backup en el directorio final.
+
+    Se llama **después** de que el artefacto nuevo verificó checksum y quedó
+    commiteado. Borrar antes sería perder los dos si la descarga falla.
+    """
+    plan = plan_retention(directorio, keep=keep)
+    if not plan.delete:
+        return []
+    logger.info("retención: %s", plan.describe())
+    return apply_retention(plan)
+
+
 def mark_applied(state_path: str | Path, backup: BackupId) -> None:
     """Registra el backup como efectivamente cargado en el lago.
 
@@ -126,6 +144,8 @@ def acquire_latest_bak(
     now: datetime | None = None,
     free_bytes: int | None = None,
     min_window_seconds: int = DEFAULT_MIN_WINDOW_SECONDS,
+    since_days: int = DEFAULT_SINCE_DAYS,
+    keep_backups: int = DEFAULT_KEEP,
 ) -> AcquireOutcome:
     """Busca el backup más nuevo disponible en el buzón y lo deja en `final_dir`."""
     estado = load_state(state_path)
@@ -133,6 +153,7 @@ def acquire_latest_bak(
     imap = imap_client or connect_gmail(imap_user, imap_password)
     propio_http = http_client is None
     http = http_client or httpx.Client(timeout=60.0, follow_redirects=False)
+    fecha_desde = (now or datetime.now(timezone.utc)).date() - timedelta(days=since_days)
 
     try:
         # readonly: el poller no marca correos como leídos. La deduplicación la
@@ -141,6 +162,7 @@ def acquire_latest_bak(
         candidatos = scan_mailbox(
             imap,
             since_uid=estado.last_uid,
+            since_date=fecha_desde,
             sender=sender,
             subject_pattern=subject_pattern,
             link_hosts=link_hosts,
@@ -198,11 +220,15 @@ def acquire_latest_bak(
                 ) from exc
             else:
                 _marcar_handled(state_path, estado, uid, grupo)
+                podados = _podar(final_dir, keep_backups)
+                detalle = f"adquirido {backup.filename}"
+                if podados:
+                    detalle += f" (borrados {len(podados)} anteriores)"
                 return AcquireOutcome(
                     status=STATUS_ACQUIRED,
                     path=destino,
                     backup_id=backup,
-                    message=f"adquirido {backup.filename}",
+                    message=detalle,
                 )
 
         if terminales:

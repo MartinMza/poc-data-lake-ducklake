@@ -36,6 +36,16 @@ estética: la impone S2 (ventana de 12 h del link).
 2. Un correo que no matchee remitente y asunto configurados no debe producir
    ninguna descarga ni ningún error visible.
 
+Requisito agregado por el usuario (L10), textual: "Muy importante filtrar por
+fecha".
+
+3. El poller debe filtrar por fecha en el propio buzón (`IMAP SINCE`), no
+   recorrer el historial completo de avisos. Un buzón con dos años de correos
+   no debe implicar dos años de `FETCH` en la primera corrida.
+4. La ventana de búsqueda debe ser configurable (`ACQUIRE_SINCE_DAYS`) y su
+   default tiene que ser menor que la ventana de la firma del link: un correo
+   más viejo que la firma no aporta nada descargable.
+
 ### S2 — Forma real del artefacto y ventana de validez
 
 Forma verificada del enlace (credenciales redactadas a propósito):
@@ -127,8 +137,21 @@ error**. Esta es la guarda que separa automatizar de automatizar mal.
 
 1. Antes de descargar, el sistema debe verificar espacio libre suficiente y
    abortar con mensaje claro si no.
-2. Debe existir una política de retención que impida el crecimiento sin techo:
-   cada backup pesa ~7,5 GB y llegan 1–2 por semana (~60 GB/mes).
+
+Requisito agregado por el usuario (L10), textual: "siempre sobre escribir y
+dejar un solo archivo backup".
+
+2. Tras una adquisición exitosa, el directorio final debe quedar con
+   **exactamente un** artefacto de backup fechado: el nuevo reemplaza al
+   anterior. No se acumulan versiones.
+3. La poda automática corre **después** de que el artefacto nuevo verificó
+   checksum y quedó commiteado, nunca antes: borrar el anterior para hacerle
+   lugar al nuevo, con el nuevo sin verificar, sería perder los dos.
+4. Lo que no parsea como backup fechado nunca se borra (`test-source.bak`,
+   `bak2pq-synth.bak` y cualquier fixture quedan intactos). El filtro es el
+   nombre, no el tamaño ni la extensión.
+5. La poda tiene que ser una sola implementación reusada por el flow y por el
+   CLI: dos rutas de borrado distintas es cómo se pierde un backup.
 
 ### S9 — Fallas visibles
 
@@ -142,10 +165,10 @@ error**. Esta es la guarda que separa automatizar de automatizar mal.
 | T1 | S3 | Identidad del backup: parseo del nombre + guarda de monotonicidad | `orchestration/kavos_acquire/identity.py` | `ce4ef90` |
 | T2 | S5 | Estado persistido: JSON atómico, Message-IDs, timestamps aplicados | `orchestration/kavos_acquire/state.py` | `4fbbc45` |
 | T3 | S2,S4,S8 | Descarga reanudable, checksum, guarda de ventana y de disco, commit atómico | `orchestration/kavos_acquire/download.py` | `fa326ee` |
-| T4 | S6 | Poller IMAP de Gmail: filtro por remitente/asunto, extracción de links, allowlist | `orchestration/kavos_acquire/mailbox.py` | `d53aed4` |
+| T4 | S6,S1 | Poller IMAP de Gmail: fecha (`SINCE`), remitente/asunto, links, allowlist | `orchestration/kavos_acquire/mailbox.py` | `d53aed4` |
 | T5 | — | Resolver pluggable por host (directo/S3, OneDrive, Drive) | `orchestration/kavos_acquire/resolvers.py` | `dc7a8ba` |
 | T6 | S7 | Tarea `acquire` en el flow + forma de correrlo con schedule | `orchestration/flow.py`, `orchestration/serve.py` | `c9233a6`, `ea9c816` |
-| T7 | S8 | Poda de backups reteniendo N | `scripts/prune_backups.py` | `87a27cd` |
+| T7 | S8 | Retención: exactamente un backup, una sola implementación | `orchestration/kavos_acquire/retention.py`, `scripts/prune_backups.py` | `87a27cd` |
 | T8 | S1,S2,S9 | Documentación y variables de entorno | `docs/MANUAL.md`, `README.md`, `.env.example` | `5ff909d` |
 
 ### Límite de slice (importante para el review)
@@ -293,3 +316,43 @@ alinear el ejemplo a mano.
 Verificación del parser contra el aviso real (fixture redactado, token y firma
 reemplazados): `sender='info@finnegans.com.ar'`, 1 link de 450 caracteres
 intacto pese a los 8 cortes.
+
+### L10 — Cambio de requisito del usuario (textual)
+
+> listo. Ya cargue las credenciales. Muy importante filtrar por fecha y siempre
+> sobre escribir y dejar un solo archivo backup
+
+Interpretación aplicada, en dos partes:
+
+- **"filtrar por fecha"** → `IMAP SINCE` con ventana configurable
+  (`ACQUIRE_SINCE_DAYS`, default 3, menor que la firma de 12 h para no buscar
+  correos que ya no se pueden bajar). Reescribe S1, reabre T4.
+- **"siempre sobrescribir y dejar un solo archivo"** → retención **1**: tras una
+  adquisición exitosa y verificada, el anterior se borra y queda sólo el nuevo.
+  Reescribe S8, reabre T7 y agrega la poda automática al orquestador.
+
+La lógica de borrado se extrae a `kavos_acquire/retention.py` y la comparten el
+flow y el CLI: la versión anterior la tenía sólo `scripts/prune_backups.py`, y
+duplicarla para el uso automático sería tener dos rutas de borrado.
+
+Riesgo asumido explícitamente por el usuario: con retención 1, si la firma del
+link nuevo vence antes de bajarlo, el backup anterior ya no está y hay que
+pedirlo de nuevo. La poda corre sólo después de verificar checksum, así que
+nunca se borra el anterior para hacerle lugar a uno dudoso.
+
+### L11 — Verificación del cambio de requisito (L10)
+
+| Qué | Evidencia |
+|---|---|
+| Filtro por fecha en el buzón | `scan_mailbox` arma `UID n:* SINCE 1-Nov-2026`; fecha armada a mano, no con `strftime('%b')`, que depende del locale y devolvería "nov" |
+| Retención 1, una sola implementación | `kavos_acquire/retention.py` la usan el orquestador y el CLI; `apply_retention` es el único `unlink` del proyecto |
+| Sólo se poda después de verificar | `pipeline._podar` corre después de `download()` (checksum + `os.replace`); test `test_si_la_descarga_falla_el_backup_anterior_sigue_ahi` |
+| Fixtures protegidos | `test-source.bak`, `bak2pq-synth.bak` y `notas.txt` quedan como "ignorados" y nunca se borran |
+| Suite | `115 passed` |
+| CLI sobre el directorio real | `keep=1`, conserva el `.bak` del 07/10, ignora los 2 fixtures |
+| Flow completo | `Completed` con `acquire` en skip |
+
+Corrección de diseño durante la implementación: `freed_bytes` era una property
+que leía el disco, así que el resumen del CLI —impreso **después** de aplicar—
+siempre decía "0 bytes liberados". Pasó a capturarse en el momento de
+planificar.

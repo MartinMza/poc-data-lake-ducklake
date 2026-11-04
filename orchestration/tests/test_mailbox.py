@@ -331,3 +331,30 @@ def test_los_defaults_de_codigo_casan_con_el_correo_real():
 
     assert sender_matches(parsed.sender, FINNEGANS_SENDER)
     assert subject_matches(parsed.subject, FINNEGANS_SUBJECT_PATTERN)
+
+
+# --- filtro por fecha (L10) --------------------------------------------------
+
+
+def test_scan_filtra_por_fecha_con_since():
+    """Requisito L10: "filtrar por fecha", no recorrer el historial completo.
+
+    Sin `SINCE`, la primera corrida hace un FETCH por cada aviso desde que
+    existe el buzón. Con dos años de correos semanales son cientos de descargas
+    de mensajes para encontrar uno.
+    """
+    from datetime import date
+
+    imap = FakeImap({9: _raw_message(f"nuevo {URL}")})
+
+    scan_mailbox(imap, since_uid=0, since_date=date(2026, 11, 1), **CONFIG)
+
+    assert imap.criterios == ["UID 1:* SINCE 1-Nov-2026"]
+
+
+def test_scan_sin_fecha_no_agrega_since():
+    imap = FakeImap({9: _raw_message(f"nuevo {URL}")})
+
+    scan_mailbox(imap, since_uid=3, **CONFIG)
+
+    assert imap.criterios == ["UID 4:*"]

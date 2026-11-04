@@ -258,3 +258,37 @@ def test_si_falla_el_ultimo_correo_pero_hay_uno_bueno_antes_se_usa_el_bueno(tmp_
 
     assert resultado.status == "acquired"
     assert resultado.backup_id.filename == NUEVO
+
+
+# --- S8: exactamente un backup en el destino (L10) ---------------------------
+
+VIEJO_BAK = "FAF12_Kavos_2026_10_07_233301_411720.bak"
+
+
+def test_deja_un_solo_backup_tras_adquirir(tmp_path):
+    """Requisito L10: "siempre sobre escribir y dejar un solo archivo backup".
+
+    El anterior tiene que desaparecer, pero **sólo después** de que el nuevo
+    verificó checksum y quedó commiteado: borrar antes sería perder los dos si
+    la descarga falla.
+    """
+    destino = tmp_path / "mssql-backup"
+    destino.mkdir()
+    (destino / VIEJO_BAK).write_bytes(b"backup-anterior")
+
+    resultado = _acquire(tmp_path, FakeImap({4: _mail(_s3_url())}), _handler())
+
+    assert resultado.status == "acquired"
+    assert {p.name for p in destino.iterdir()} == {NUEVO}
+
+
+def test_si_la_descarga_falla_el_backup_anterior_sigue_ahi(tmp_path):
+    destino = tmp_path / "mssql-backup"
+    destino.mkdir()
+    (destino / VIEJO_BAK).write_bytes(b"backup-anterior")
+
+    with pytest.raises(AcquisitionFailed):
+        _acquire(tmp_path, FakeImap({4: _mail(_s3_url())}), _handler(estado=500))
+
+    assert (destino / VIEJO_BAK).exists()
+    assert not (destino / NUEVO).exists()

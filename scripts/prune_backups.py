@@ -1,30 +1,25 @@
 #!/usr/bin/env python3
-"""Poda de backups en `mssql-backup/`: retiene los N más nuevos (Spec S8).
+"""Poda `mssql-backup/` dejando un solo backup (spec S8, requisito L10).
 
-Contexto: cada backup pesa ~7,5 GB y llegan 1–2 por semana (~60 GB/mes), así
-que el crecimiento sin techo hay que podarlo a mano con una política
-declarada. El orden lo da la fecha del NOMBRE
-(`kavos_acquire.identity.parse_backup_id`), nunca el mtime: un `cp` o una
-re-descarga cambian el mtime sin cambiar qué backup es más nuevo, y ordenar
-por mtime borraría el backup equivocado.
+Requisito del usuario, textual: "siempre sobre escribir y dejar un solo archivo
+backup".
 
-Qué hace:
-- solo mira archivos regulares en el tope del directorio (nunca desciende a
-  subdirectorios: `.incoming/` con sus `.part` en vuelo queda intacto);
-- solo considera nombres que parsean como backup (`.bak`, `.bak.tar.gz`,
-  `.tgz`, `.tar`, `.tar.bz2`, `.tar.xz` con timestamp); lo demás NUNCA se
-  borra y se reporta como ignorado;
-- conserva los N más nuevos y propone borrar el excedente;
-- nunca borra el backup más nuevo: si algo quedó mal configurado, antes de
-  dejar el directorio sin backups conserva todo.
+Este script es una **cáscara**: la lógica de qué se borra vive en
+`kavos_acquire/retention.py` y la comparte el flow, que poda automáticamente
+después de adquirir. Tener el algoritmo de borrado dos veces es cómo se pierde
+un backup: la segunda copia se desincroniza y termina borrando lo que la primera
+protegía.
+
+El orden es por el timestamp del **nombre**, nunca por mtime: un `cp` o una
+re-descarga cambia el mtime, y ordenar por él borraría el backup del día. Lo que
+no parsea como backup fechado no se borra nunca (fixtures del repo incluidos) y
+no se desciende a `.incoming/`, que tiene `.part` en vuelo.
 
 Uso:
     orchestration/.venv/bin/python scripts/prune_backups.py                 # dry-run
     orchestration/.venv/bin/python scripts/prune_backups.py --apply         # borra
     orchestration/.venv/bin/python scripts/prune_backups.py --keep 3 --apply
     PRUNE_DIR=/otra/ruta orchestration/.venv/bin/python scripts/prune_backups.py
-
-Sin `--apply` solo muestra el plan (misma convención que purge_sample_data.py).
 """
 
 from __future__ import annotations
@@ -39,9 +34,12 @@ sys.path.insert(
     os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "orchestration"),
 )
 
-from kavos_acquire.identity import BackupId, BackupNameError, parse_backup_id  # noqa: E402
-
-DEFAULT_KEEP = 2
+from kavos_acquire.retention import (  # noqa: E402
+    DEFAULT_KEEP,
+    RetentionPlan,
+    apply_retention,
+    plan_retention,
+)
 
 
 def resolve_target_dir(explicit: str | None) -> Path:
@@ -54,48 +52,35 @@ def resolve_target_dir(explicit: str | None) -> Path:
     return Path(__file__).resolve().parent.parent / "mssql-backup"
 
 
-def build_plan(
-    backup_dir: Path, keep: int
-) -> tuple[list[tuple[BackupId, Path]], list[tuple[BackupId, Path]], list[tuple[Path, str]]]:
-    """Clasifica el tope de `backup_dir` en (conservados, a_borrar, ignorados).
-
-    El orden es por identidad del NOMBRE (`BackupId`: fecha, fracción, nombre),
-    nunca por mtime. Los conservados son los `keep` más nuevos. Lo que no
-    parsea como backup cae en ignorados y jamás se borra. Como última defensa
-    (Spec S8.7), el backup más nuevo nunca integra `a_borrar`: si `keep` llega
-    mal, se conserva todo antes que dejar el directorio sin backups.
-    """
-    candidatos: list[tuple[BackupId, Path]] = []
-    ignorados: list[tuple[Path, str]] = []
-    for entrada in sorted(backup_dir.iterdir(), key=lambda p: p.name):
-        if entrada.is_symlink() or entrada.is_dir():
-            continue  # Nunca descender: .incoming/ y sus .part quedan intactos.
-        if not entrada.is_file():
-            continue
-        try:
-            identidad = parse_backup_id(entrada.name)
-        except BackupNameError as exc:
-            ignorados.append((entrada, str(exc)))
-            continue
-        candidatos.append((identidad, entrada))
-
-    ordenados = sorted(candidatos, key=lambda item: item[0], reverse=True)
-    if keep < 1:
-        keep = 1  # El CLI ya rechaza N < 1; acá se conserva todo antes que vaciar.
-    conservados = ordenados[:keep]
-    a_borrar = ordenados[keep:]
-    if ordenados and ordenados[0] in a_borrar:
-        conservados, a_borrar = ordenados, []  # No debería pasar; fallar conservando.
-    return conservados, a_borrar, ignorados
-
-
 def _tamano(path: Path) -> int:
-    return path.stat().st_size
+    try:
+        return path.stat().st_size
+    except OSError:
+        return 0
+
+
+def _imprimir_plan(plan: RetentionPlan, objetivo: Path, keep: int) -> None:
+    print(f"Plan de poda ({objetivo}, keep={keep}):")
+    for identidad, path in plan.keep:
+        print(
+            f"  CONSERVAR  {path.name}  "
+            f"({_tamano(path)} bytes, {identidad.stamp:%Y-%m-%d %H:%M:%S})"
+        )
+    for identidad, path in plan.delete:
+        print(
+            f"  BORRAR     {path.name}  "
+            f"({_tamano(path)} bytes, {identidad.stamp:%Y-%m-%d %H:%M:%S})"
+        )
+    for path, motivo in plan.ignored:
+        print(f"  IGNORADO   {path.name}  ({motivo})")
 
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
-        description="Poda mssql-backup/ conservando los N backups más nuevos por NOMBRE (dry-run sin --apply)"
+        description=(
+            "Poda mssql-backup/ dejando los N backups más nuevos por NOMBRE "
+            "(dry-run sin --apply)"
+        )
     )
     parser.add_argument(
         "directorio",
@@ -124,42 +109,29 @@ def main(argv: list[str] | None = None) -> int:
         print(f"Error: {objetivo} no existe o no es un directorio; nada borrado.")
         return 1
 
-    conservados, a_borrar, ignorados = build_plan(objetivo, args.keep)
+    plan = plan_retention(objetivo, keep=args.keep)
 
-    if not conservados and not ignorados:
+    if not plan.keep and not plan.ignored:
         print(f"Nada que podar: {objetivo} no tiene backups reconocibles.")
         return 0
 
-    print(f"Plan de poda ({objetivo}, keep={args.keep}):")
-    for identidad, path in conservados:
-        print(f"  CONSERVAR  {path.name}  ({_tamano(path)} bytes, {identidad.stamp:%Y-%m-%d %H:%M:%S})")
-    for identidad, path in a_borrar:
-        print(f"  BORRAR     {path.name}  ({_tamano(path)} bytes, {identidad.stamp:%Y-%m-%d %H:%M:%S})")
-    for path, motivo in ignorados:
-        print(f"  IGNORADO   {path.name}  ({motivo})")
+    _imprimir_plan(plan, objetivo, args.keep)
 
-    liberables = sum(_tamano(path) for _, path in a_borrar)
     if not args.apply:
         print("\nDry-run: nada borrado. Re-ejecutá con --apply para aplicar.")
         print(
-            f"Resumen: conservados={len(conservados)}, "
-            f"a borrar={len(a_borrar)} ({liberables} bytes liberables), "
-            f"ignorados={len(ignorados)}."
+            f"Resumen: conservados={len(plan.keep)}, "
+            f"a borrar={len(plan.delete)} ({plan.freed_bytes} bytes liberables), "
+            f"ignorados={len(plan.ignored)}."
         )
         return 0
 
-    borrados = 0
-    liberados = 0
-    for _, path in a_borrar:
-        liberados += _tamano(path)
-        path.unlink()
-        borrados += 1
-
+    borrados = apply_retention(plan)
     print("\nPoda aplicada.")
     print(
-        f"Resumen: conservados={len(conservados)}, "
-        f"borrados={borrados} ({liberados} bytes liberados), "
-        f"ignorados={len(ignorados)}."
+        f"Resumen: conservados={len(plan.keep)}, "
+        f"borrados={len(borrados)} ({plan.freed_bytes} bytes liberados), "
+        f"ignorados={len(plan.ignored)}."
     )
     return 0
 

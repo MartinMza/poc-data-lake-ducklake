@@ -61,7 +61,9 @@ from prefect import flow, get_run_logger, task
 
 from kavos_acquire.defaults import FINNEGANS_SENDER, FINNEGANS_SUBJECT_PATTERN
 from kavos_acquire.download import DEFAULT_MIN_WINDOW_SECONDS
+from kavos_acquire.retention import DEFAULT_KEEP
 from kavos_acquire.pipeline import (
+    DEFAULT_SINCE_DAYS,
     STATUS_ACQUIRED,
     AcquireOutcome,
     acquire_latest_bak,
@@ -229,6 +231,9 @@ def acquire() -> AcquireOutcome:
         link_hosts=link_hosts,
         min_window_seconds=int(os.getenv(
             "ACQUIRE_MIN_WINDOW_SECONDS", str(DEFAULT_MIN_WINDOW_SECONDS))),
+        # Requisito L10: filtrar por fecha y dejar un solo backup.
+        since_days=int(os.getenv("ACQUIRE_SINCE_DAYS", str(DEFAULT_SINCE_DAYS))),
+        keep_backups=int(os.getenv("ACQUIRE_KEEP_BACKUPS", str(DEFAULT_KEEP))),
     )
     logger.info("acquire: %s", outcome.message)
     print(f"acquire: {outcome.status}: {outcome.message}", flush=True)

@@ -22,6 +22,7 @@ import imaplib
 import logging
 import re
 from dataclasses import dataclass, field
+from datetime import date
 from email.message import Message
 from email.utils import parseaddr
 from urllib.parse import urlsplit
@@ -35,6 +36,19 @@ GMAIL_IMAP_PORT = 993
 
 _URL_RE = re.compile(r"https?://[^\s<>\"'`]+", re.IGNORECASE)
 _TRAILING = ".,;:)]}>\"'"
+
+# Meses en inglés para el criterio IMAP `SINCE`. Se arma a mano en vez de usar
+# `strftime('%b')` porque ése depende del locale: con un locale español
+# devolvería "nov" y el servidor IMAP no lo entendería.
+_MESES_EN = (
+    "Jan", "Feb", "Mar", "Apr", "May", "Jun",
+    "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
+)
+
+
+def imap_date(fecha: date) -> str:
+    """Fecha en el formato de IMAP: `1-Nov-2026` (sin cero a la izquierda)."""
+    return f"{fecha.day}-{_MESES_EN[fecha.month - 1]}-{fecha.year:04d}"
 
 
 class MailboxError(RuntimeError):
@@ -194,12 +208,19 @@ def scan_mailbox(
     sender: str,
     subject_pattern: str,
     link_hosts: list[str],
+    since_date: date | None = None,
 ) -> list[LinkCandidate]:
-    """Busca correos con `uid > since_uid` y devuelve sus links clasificados.
+    """Busca correos con `uid > since_uid` (y desde `since_date`) y clasifica sus links.
+
+    `since_date` empuja el filtro al servidor con `IMAP SINCE` (requisito L10:
+    "filtrar por fecha"). Sin él, la primera corrida hace un `FETCH` por cada
+    aviso histórico del buzón sólo para descubrir que están vencidos.
 
     No descarga nada y no marca correos como leídos: solo lee y clasifica.
     """
     criterio = f"UID {since_uid + 1}:*"
+    if since_date is not None:
+        criterio += f" SINCE {imap_date(since_date)}"
     estado, datos = imap.uid("SEARCH", None, criterio)
     if estado != "OK":
         raise MailboxError(f"IMAP SEARCH falló ({estado}) con criterio {criterio!r}")

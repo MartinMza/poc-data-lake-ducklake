@@ -164,7 +164,7 @@ Eso es por diseño, no un olvido.
 | ver si hay datos | `bronze/.venv/bin/python scripts/lake_counts.py` | usa el venv de bronze |
 | correr la orquestación | `orchestration/.venv/bin/python orchestration/flow.py` | adquiere el `.bak` del correo; sin `ACQUIRE_*` usa `MSSQL_BAK_PATH` |
 | bajar el backup solo, con schedule | `orchestration/.venv/bin/python orchestration/serve.py` | cron según `ACQUIRE_POLL_HOURS` (default 4 h) |
-| podar backups viejos | `orchestration/.venv/bin/python scripts/prune_backups.py` | dry-run por defecto; `--apply` borra |
+| podar backups viejos | `orchestration/.venv/bin/python scripts/prune_backups.py` | deja **un** backup; dry-run por defecto, `--apply` borra |
 | restaurar el `.bak` | `./scripts/restore_mssql.sh <archivo>.bak FAF12_Kavos` | idempotente, usa `REPLACE` |
 | limpiar datos sintéticos viejos | `bronze/.venv/bin/python scripts/purge_sample_data.py` | dry-run por defecto; `--apply` ejecuta |
 | generar una API key | `openssl rand -hex 24` | 24 caracteres mínimo |

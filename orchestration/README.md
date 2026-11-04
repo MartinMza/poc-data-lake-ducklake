@@ -24,6 +24,17 @@ configurarlos— y `tests/test_mailbox.py` los fija contra el correo real. El
 `text/plain` del aviso no trae el link: sólo el `text/html`, con el `href` entre
 comillas simples y la URL cortada en 8 puntos por quoted-printable.
 
+Dos comportamientos que no son opcionales (requisito del operador):
+
+- **Filtro por fecha**: el poller busca con `IMAP SINCE` una ventana de
+  `ACQUIRE_SINCE_DAYS` (default 3, menor que la firma de 12 h). No recorre el
+  historial del buzón.
+- **Un solo backup**: tras verificar checksum y commitear el artefacto nuevo,
+  se borra el anterior (`ACQUIRE_KEEP_BACKUPS`, default 1). La poda automática
+  usa la misma implementación que `scripts/prune_backups.py`
+  (`kavos_acquire/retention.py`) y nunca corre antes de verificar: borrar el
+  anterior para hacerle lugar a uno dudoso sería perder los dos.
+
 ## Archivos
 
 | Archivo | Qué es |
