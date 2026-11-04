@@ -98,11 +98,17 @@ def test_sqlserver_tables_inventory(client):
         # tablas sin filas (catálogos, tablas de configuración, históricas).
         assert row["row_count"] >= 0
         assert row["column_count"] == len(row["columns"])
-        # `last_load_id` era el bookkeeping de dlt (`_dlt_load_id`). El cargador
-        # actual escribe Parquet directo, así que no existe esa columna y el
-        # campo llega vacío. El registro real de versiones lo da DuckLake
-        # (`list_snapshots`), no la tabla.
-        assert row.get("last_load_id") is None or isinstance(row["last_load_id"], str)
+        # Frescura: sale de los snapshots de DuckLake, el registro real de
+        # escrituras, no de una columna en la tabla. Antes se leía de
+        # `_dlt_load_id`, que el cargador actual no escribe: llegaba `None` en las
+        # 788 tablas y ningún test lo notaba (este mismo test afirmaba que `None`
+        # era lo esperado, o sea que cuidaba el defecto).
+        assert row.get("last_load_id") is None or isinstance(row["last_load_id"], int)
+        assert "last_load_at" in row
+        if row["row_count"] > 0:
+            # Una tabla con filas tiene que saber cuándo se escribió, o el campo
+            # de frescura vuelve a ser decorativo.
+            assert row["last_load_at"] is not None
 
 
 def test_preview_rows_paginates_real_data(client):

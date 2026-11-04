@@ -1,4 +1,4 @@
-# Imagen unificada de ejecución para KavosLake Data Platform (ingesta, dbt, Prefect, backup/restore y descompresión).
+# Imagen unificada de ejecución para KavosLake Data Platform (ingesta, Prefect, backup/restore y descompresión).
 FROM python:3.12-slim-bookworm
 
 WORKDIR /workspace
@@ -42,18 +42,32 @@ COPY --from=ghcr.io/astral-sh/uv:0.9.26 /uv /uvx /bin/
 
 # 4. Pre-construir los entornos virtuales de los módulos del proyecto
 COPY bronze/requirements.txt /workspace/bronze/requirements.txt
-COPY dbt/requirements.txt /workspace/dbt/requirements.txt
+COPY bak2parquet/requirements.txt /workspace/bak2parquet/requirements.txt
 COPY orchestration/requirements.txt /workspace/orchestration/requirements.txt
 COPY requirements.txt /workspace/requirements.txt
 
+# Sin dbt: la capa silver/gold se retiró del stack y `dbt/requirements.txt` ya no
+# existe. Su COPY hacía fallar el build de todo el stack, lake-init incluido.
 RUN uv venv /workspace/bronze/.venv --python 3.12 \
     && uv pip install -p /workspace/bronze/.venv/bin/python -r /workspace/bronze/requirements.txt \
-    && uv venv /workspace/dbt/.venv --python 3.12 \
-    && uv pip install -p /workspace/dbt/.venv/bin/python -r /workspace/dbt/requirements.txt \
+    # El flow corre `python -m bak2parquet` con el intérprete de bronze, así que
+    # las deps del extractor (pyodbc, arrow-odbc) tienen que vivir ahí. Sin esto
+    # la extracción falla con "No module named 'pyodbc'". container_init.sh las
+    # instalaba en runtime; hornearlas saca la red del primer arranque.
+    && uv pip install -p /workspace/bronze/.venv/bin/python -r /workspace/bak2parquet/requirements.txt \
     && uv venv /workspace/orchestration/.venv --python 3.12 \
     && uv pip install -p /workspace/orchestration/.venv/bin/python -r /workspace/orchestration/requirements.txt \
     && uv venv /workspace/.venv --python 3.12 \
     && uv pip install -p /workspace/.venv/bin/python -r /workspace/requirements.txt
+
+# 4b. Auto-chequeo de dependencias de runtime.
+# El flow corre `python -m bak2parquet` con el intérprete de bronze y
+# `prefect`/`httpx` con el de orchestration. Si falta una, el fallo aparecía
+# recién en la corrida programada (fue exactamente lo que pasó con pyodbc:
+# "No module named 'pyodbc'" a las 12:18 de la noche). Acá rompe el build.
+RUN /workspace/bronze/.venv/bin/python -c "import pyodbc, arrow_odbc, pyarrow, duckdb" \
+    && /workspace/orchestration/.venv/bin/python -c "import prefect, httpx" \
+    && /workspace/.venv/bin/python -c "import fastapi, duckdb"
 
 # 5. Pre-instalar extensiones DuckDB (ducklake, postgres, httpfs) para evitar descargas en runtime
 RUN /workspace/bronze/.venv/bin/python -c "import duckdb; con = duckdb.connect(); con.execute('INSTALL ducklake; INSTALL postgres; INSTALL httpfs;')"

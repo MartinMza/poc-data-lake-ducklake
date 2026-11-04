@@ -3,23 +3,62 @@
 Flow único `kavos-lake-medallion` (`orchestration/flow.py`), lineal y de una sola
 rama, porque la única fuente de datos es SQL Server:
 
-1. **`bak-watch-restore`** — detecta un `.bak` nuevo y actualiza la marca del
-   último restore exitoso.
+1. **`acquire`** — baja el `.bak` nuevo desde Gmail (link S3 presignado) a
+   `mssql-backup/`, verificado por checksum. Rechaza un artefacto más viejo que
+   el último aplicado. Sin `ACQUIRE_*` configurado se salta en éxito.
 2. **`bak-extract`** — extrae el backup completo a Parquet con `bak2parquet`
-   (motor efímero acotado en memoria).
+   (motor efímero acotado en memoria). Toma el archivo que dejó `acquire`.
 3. **`bronze-load`** — carga ese Parquet en DuckLake Bronze (`load_parquet.py`).
 
-Fail-stop: si el restore falla, la ingesta no corre. Cada `@task` tiene
+Fail-stop: si la adquisición o la extracción fallan, la ingesta no corre; si la
+carga falla, el backup nunca se marca como aplicado. Cada `@task` tiene
 reintentos configurables y logs centralizados en Prefect.
+
+Schedule declarado (sin cron externo): `orchestration/serve.py` sirve el flow
+con un cron derivado de `ACQUIRE_POLL_HOURS` (default 4 h).
+
+En el stack, ese scheduler es el servicio **`prefect-serve`**
+(`docker compose up -d prefect-serve`, `restart: unless-stopped`). Reusa la
+imagen `kavos-lake-pipeline`, así que corre el mismo camino de datos que
+`lake-init` (ODBC + venvs pre-construidos), contra `mssql`, `garage` y
+`postgres-catalog`. Monta `./mssql-backup` y dos volúmenes: `serve-state`
+(estado y marca de extracción) y `serve-parquet`. **Si `serve-state` se
+pierde, la guarda de antigüedad olvida el último backup aplicado** y podría
+volver a cargar uno viejo.
+
+Con el servicio corriendo no hace falta —ni conviene— lanzar `flow.py` a mano:
+es el mismo flow y competirían por el mismo estado.
+
+El aviso real de Finnegans llega por Amazon SES desde
+`info@finnegans.com.ar` con asunto `Backup de Base de Datos Disponible`. Esos
+dos valores son defaults en `kavos_acquire/defaults.py` —no hace falta
+configurarlos— y `tests/test_mailbox.py` los fija contra el correo real. El
+`text/plain` del aviso no trae el link: sólo el `text/html`, con el `href` entre
+comillas simples y la URL cortada en 8 puntos por quoted-printable.
+
+Dos comportamientos que no son opcionales (requisito del operador):
+
+- **Filtro por fecha**: el poller busca con `IMAP SINCE` una ventana de
+  `ACQUIRE_SINCE_DAYS` (default 3, menor que la firma de 12 h). No recorre el
+  historial del buzón.
+- **Un solo backup**: tras verificar checksum y commitear el artefacto nuevo,
+  se borra el anterior (`ACQUIRE_KEEP_BACKUPS`, default 1). La poda automática
+  usa la misma implementación que `scripts/prune_backups.py`
+  (`kavos_acquire/retention.py`) y nunca corre antes de verificar: borrar el
+  anterior para hacerle lugar a uno dudoso sería perder los dos.
 
 ## Archivos
 
 | Archivo | Qué es |
 |---|---|
-| `flow.py` | Flow + 3 tasks (`bak-watch-restore`, `bak-extract`, `bronze-load`); entrypoint único |
-| `requirements.txt` | `prefect==3.8.8` (cliente) |
+| `flow.py` | Flow + 3 tasks (`acquire`, `bak-extract`, `bronze-load`); entrypoint |
+| `serve.py` | Sirve el flow con schedule cron (`ACQUIRE_POLL_HOURS`) |
+| `kavos_acquire/` | Adquisición: buzón, allowlist, descarga verificada, estado |
+| `tests/` | Tests del componente (sin red, sin motor): `pytest` desde acá |
+| `requirements.txt` | `prefect==3.8.8` (cliente) + `httpx` + `pytest` |
 | `.venv/` | Venv propio solo con prefect (no commitear; `uv venv`) |
 | `.last_restore.json` | Marca del último restore exitoso (path+mtime+size+DB); local, gitignored |
+| `.acquire_state.json` | UIDs y Message-IDs procesados + último backup aplicado; local, gitignored |
 
 Cada etapa corre como subproceso con el venv ya verificado de su componente
 (`bronze/.venv`); este venv solo aporta el cliente Prefect.

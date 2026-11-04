@@ -6,6 +6,11 @@
 #
 # Todos los puertos y hosts están parametrizados por variables de entorno (ver .env / .env.example).
 
+# Nombre de proyecto explícito. Sin esto se deriva del directorio del repo y los
+# volúmenes quedan con otro prefijo (`dulse_*`): el rename del proyecto a medias
+# dejaba contenedores `kavos-lake-*` sobre volúmenes `dulse_*`.
+name: kavos-lake
+
 services:
   postgres-catalog:
     image: postgres:17.6-bookworm
@@ -136,10 +141,19 @@ services:
       PREFECT_SCHEME: ${PREFECT_SCHEME:-http}
       PREFECT_HOST: ${DOCKER_PREFECT_HOST:-prefect-server}
       PREFECT_PORT: "${PREFECT_INTERNAL_PORT:-4200}"
+      # El bootstrap también ingiere, así que también tiene que dejar la marca
+      # de aplicado en el estado persistido. Sin este volumen la marca caía en
+      # el filesystem del contenedor: se perdía al terminar lake-init y
+      # prefect-serve seguía viendo `applied` vacío, o sea la guarda de
+      # antigüedad sin referencia. El path tiene que ser el mismo que usa el
+      # scheduler.
+      ACQUIRE_STATE_PATH: /workspace/state/.acquire_state.json
+      ACQUIRE_FINAL_DIR: /workspace/mssql-backup
     volumes:
       - ./mssql-backup:/workspace/mssql-backup
       - ./mssql-fast:/workspace/mssql-fast
       - ./backups:/workspace/backups
+      - serve-state:/workspace/state
     depends_on:
       postgres-catalog:
         condition: service_healthy
@@ -148,10 +162,88 @@ services:
       mssql:
         condition: service_healthy
 
+  prefect-serve:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.pipeline
+    image: kavos-lake-pipeline:latest
+    container_name: kavos-lake-prefect-serve
+    restart: unless-stopped
+    working_dir: /workspace
+    command:
+      - /workspace/orchestration/.venv/bin/python
+      - orchestration/serve.py
+    environment:
+      # Mismo catálogo y S3 que lake-init: el flow escribe en el mismo lago.
+      CATALOG_HOST: ${DOCKER_CATALOG_HOST:-postgres-catalog}
+      CATALOG_PORT: "${CATALOG_INTERNAL_PORT:-5432}"
+      CATALOG_DB: ${CATALOG_DB:-ducklake_catalog}
+      CATALOG_USER: ${CATALOG_USER:-ducklake}
+      CATALOG_PASSWORD: ${CATALOG_PASSWORD:-ducklake}
+      GARAGE_SCHEME: ${GARAGE_SCHEME:-http}
+      GARAGE_HOST: ${DOCKER_GARAGE_HOST:-garage}
+      GARAGE_S3_PORT: "${GARAGE_S3_PORT:-3900}"
+      GARAGE_S3_KEY_ID: ${GARAGE_S3_KEY_ID:-GK0123456789abcdef0123456789abcdef}
+      GARAGE_S3_SECRET: ${GARAGE_S3_SECRET:-0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef}
+      GARAGE_S3_REGION: ${GARAGE_S3_REGION:-garage}
+      LAKEHOUSE_BUCKET: ${LAKEHOUSE_BUCKET:-lakehouse}
+      DUCKLAKE_DATA_PREFIX: ${DUCKLAKE_DATA_PREFIX:-data}
+      MSSQL_HOST: ${DOCKER_MSSQL_HOST:-mssql}
+      MSSQL_PORT: "${MSSQL_INTERNAL_PORT:-1433}"
+      MSSQL_USER: ${MSSQL_USER:-sa}
+      MSSQL_SA_PASSWORD: "${MSSQL_SA_PASSWORD:-Str0ng!PoC-Local01}"
+      PREFECT_SCHEME: ${PREFECT_SCHEME:-http}
+      PREFECT_HOST: ${DOCKER_PREFECT_HOST:-prefect-server}
+      PREFECT_PORT: "${PREFECT_INTERNAL_PORT:-4200}"
+      # Sin esto el cliente 3.8.8 cae en modo efímero e importa `prefect.server`
+      # de su propio venv, incompatible con el FastAPI instalado:
+      # `TypeError: Body() got an unexpected keyword argument 'min_items'`.
+      # PREFECT_SCHEME/HOST/PORT no los lee el cliente; la URL sí.
+      PREFECT_API_URL: http://${DOCKER_PREFECT_HOST:-prefect-server}:${PREFECT_INTERNAL_PORT:-4200}/api
+      # Camino de datos dentro de la imagen (venvs pre-construidos).
+      BRONZE_PYTHON: /workspace/bronze/.venv/bin/python
+      BAK2PARQUET_OUT: /workspace/parquet-out
+      PYTHONPATH: /workspace/bak2parquet/src
+      # Estado persistido: si esto se pierde, la guarda de antigüedad olvida
+      # cuál fue el último backup aplicado y podría volver a cargar uno viejo.
+      ORCH_RESTORE_MARK: /workspace/state/.last_restore.json
+      ACQUIRE_STATE_PATH: /workspace/state/.acquire_state.json
+      # Adquisición (spec bak-acquire). La allowlist y las credenciales vienen
+      # de .env: sin ACQUIRE_IMAP_USER y ACQUIRE_LINK_HOSTS la tarea se salta.
+      ACQUIRE_FINAL_DIR: /workspace/mssql-backup
+      ACQUIRE_INCOMING_DIR: /workspace/mssql-backup/.incoming
+      ACQUIRE_POLL_HOURS: "${ACQUIRE_POLL_HOURS:-4}"
+      ACQUIRE_SINCE_DAYS: "${ACQUIRE_SINCE_DAYS:-3}"
+      ACQUIRE_KEEP_BACKUPS: "${ACQUIRE_KEEP_BACKUPS:-1}"
+      ACQUIRE_MIN_WINDOW_SECONDS: "${ACQUIRE_MIN_WINDOW_SECONDS:-1800}"
+      ACQUIRE_IMAP_USER: "${ACQUIRE_IMAP_USER:-}"
+      ACQUIRE_IMAP_APP_PASSWORD: "${ACQUIRE_IMAP_APP_PASSWORD:-}"
+      ACQUIRE_FROM: "${ACQUIRE_FROM:-info@finnegans.com.ar}"
+      ACQUIRE_SUBJECT_PATTERN: "${ACQUIRE_SUBJECT_PATTERN:-Backup de Base de Datos Disponible}"
+      ACQUIRE_LINK_HOSTS: "${ACQUIRE_LINK_HOSTS:-}"
+    volumes:
+      - ./mssql-backup:/workspace/mssql-backup
+      - serve-state:/workspace/state
+      - serve-parquet:/workspace/parquet-out
+    depends_on:
+      postgres-catalog:
+        condition: service_healthy
+      garage:
+        condition: service_healthy
+      mssql:
+        condition: service_healthy
+      prefect-server:
+        condition: service_healthy
+
   lake-api:
     build:
       context: .
       dockerfile: docker/Dockerfile.api
+    # Sin `image:` el nombre salía del directorio del repo (dulse-lake-api), así
+    # que el rename del proyecto quedaba a medias: el contenedor se llamaba
+    # kavos-lake-api y la imagen dulse-lake-api. Es el único servicio que
+    # buildea sin nombre fijo; el resto usa kavos-lake-*.
+    image: kavos-lake-api:latest
     container_name: kavos-lake-api
     restart: unless-stopped
     ports:
@@ -210,3 +302,8 @@ volumes:
   garage-meta:
   garage-data:
   prefect-data:
+  # Estado y Parquet del scheduler: sobreviven a recrear el contenedor. Si el
+  # estado se perdiera, la guarda de antigüedad de la adquisición olvidaría el
+  # último backup aplicado.
+  serve-state:
+  serve-parquet:

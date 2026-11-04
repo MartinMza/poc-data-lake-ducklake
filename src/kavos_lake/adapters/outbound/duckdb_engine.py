@@ -1,8 +1,9 @@
 """KavosLake Query Engine — conexión DuckLake, catálogo, tablas MSSQL y guardrails SQL.
 
-El lago contiene únicamente las 7 tablas reales ingestadas desde SQL Server
-(`bronze.mssql_bs_*` y `bronze.mssql_d_mart_*`) más los metadatos internos de
-dlt. No hay capas dbt (silver/gold) ni origen sintético.
+El lago contiene únicamente la data ingestada desde SQL Server: el catálogo
+completo de la base en el esquema `bronze` (tablas `mssql_*`). No hay capas
+dbt (silver/gold) ni origen sintético. Los conteos cambian con cada backup:
+se consultan, no se citan de memoria.
 """
 
 from __future__ import annotations
@@ -247,18 +248,49 @@ def execute_query(sql: str, limit: int = 100) -> dict[str, Any]:
     }
 
 
+def _ultimas_escrituras(cur) -> dict[str, tuple[Any, Any]]:
+    """Snapshot y hora de la última escritura de cada tabla del lago.
+
+    DuckLake registra un snapshot por commit y, en `changes.tables_created`,
+    qué tablas se crearon en él. La ingesta reemplaza la tabla completa
+    (drop + create), así que el último snapshot que la creó es su última
+    escritura.
+
+    Devuelve `{"bronze.<tabla>": (snapshot_id, snapshot_time)}`.
+    """
+    tiempos = dict(
+        cur.execute("SELECT snapshot_id, snapshot_time FROM ducklake_snapshots('lake')").fetchall()
+    )
+    filas = cur.execute(
+        """
+        WITH escrituras AS (
+            SELECT unnest(changes.tables_created) AS calificada, snapshot_id
+            FROM ducklake_snapshots('lake')
+            WHERE changes.tables_created IS NOT NULL
+        )
+        SELECT calificada, max(snapshot_id) FROM escrituras GROUP BY 1
+        """
+    ).fetchall()
+    return {calificada: (sid, tiempos.get(sid)) for calificada, sid in filas}
+
+
 def sqlserver_tables(schema: str = "bronze") -> list[dict[str, Any]]:
     """Inventario de las tablas cargadas desde SQL Server.
 
     Devuelve, por tabla: conteo de filas, cantidad de columnas, nombres de
-    columnas y el último `_dlt_load_id` (marca de la corrida de ingesta que
-    escribió la fila más reciente). Excluye los metadatos internos de dlt.
+    columnas y la frescura de la última escritura, tomada de los snapshots de
+    DuckLake: `last_load_id` (snapshot) y `last_load_at` (su hora).
+
+    Antes la frescura se leía de `_dlt_load_id`, una columna que sólo escribía
+    dlt y que el loader actual no escribe. Devolvía `None` en las 788 tablas sin
+    ningún error, así que el dato de frescura no existía y nada lo delataba.
     """
     schema = _validate_identifier(schema, kind="Esquema")
     con = get_connection()
     inventory: list[dict[str, Any]] = []
     with _lock:
         cur = con.cursor()
+        ultimas = _ultimas_escrituras(cur)
         names = [
             row[0]
             for row in cur.execute(
@@ -280,18 +312,15 @@ def sqlserver_tables(schema: str = "bronze") -> list[dict[str, Any]]:
             row_count = cur.execute(
                 f'SELECT COUNT(*) FROM lake."{schema}"."{name}"'
             ).fetchone()[0]
-            last_load_id = None
-            if "_dlt_load_id" in column_names:
-                last_load_id = cur.execute(
-                    f'SELECT MAX(_dlt_load_id) FROM lake."{schema}"."{name}"'
-                ).fetchone()[0]
+            last_load_id, last_load_at = ultimas.get(f"{schema}.{name}", (None, None))
             inventory.append(
                 {
                     "schema": schema,
                     "table": name,
                     "row_count": row_count,
                     "column_count": len(column_names),
-                    "last_load_id": serialize_value(last_load_id),
+                    "last_load_id": last_load_id,
+                    "last_load_at": serialize_value(last_load_at),
                     "columns": column_names,
                 }
             )

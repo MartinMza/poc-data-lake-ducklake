@@ -1,7 +1,8 @@
 """KavosLake FastMCP Server — herramientas para explorar la data cargada desde SQL Server.
 
-El lago contiene únicamente las 7 tablas reales ingestadas desde SQL Server
-(`bronze.mssql_bs_*` y `bronze.mssql_d_mart_*`) más los metadatos de dlt.
+El lago contiene únicamente la data ingestada desde SQL Server: el catálogo
+completo de la base en el esquema `bronze` (tablas `mssql_*`). Los conteos
+cambian con cada backup: se consultan, no se citan de memoria.
 Todas las herramientas son de solo lectura.
 """
 
@@ -18,9 +19,10 @@ mcp = FastMCP(
     "kavos-lake",
     instructions=(
         "Servidor MCP para consultar el Data Lake DuckLake. El contenido proviene "
-        "íntegramente de SQL Server (esquema bronze: mssql_bs_* y mssql_d_mart_*). "
-        "Empezá por 'sqlserver_tables' para ver qué hay cargado y seguí con "
-        "'describe_table', 'preview_rows' o 'run_query'."
+        "íntegramente de SQL Server: el catálogo completo de la base en el "
+        "esquema bronze (tablas mssql_*). Los conteos cambian con cada backup, "
+        "así que consultalos con 'sqlserver_tables' en vez de asumirlos. "
+        "Después seguí con 'describe_table', 'preview_rows' o 'run_query'."
     ),
 )
 

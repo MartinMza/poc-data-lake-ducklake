@@ -7,6 +7,9 @@
 #   3. Extrae el .bak a Parquet (`bak2parquet --engine url`, restaura temporal
 #      en SQL Server y limpia al terminar) y lo carga en Bronze
 #      (`bronze/load_parquet.py`, reemplazo total por tabla)
+#   3b. Solo si la ingesta tuvo éxito: aplica la retención del proyecto
+#      (un solo artefacto fechado, vía kavos_acquire.retention) y registra
+#      el backup como aplicado (vía kavos_acquire.pipeline.mark_applied)
 #   4. Muestra el conteo final del lago en los logs de Portainer
 # La única fuente de datos es SQL Server: no hay seed sintético ni capas dbt.
 
@@ -100,6 +103,69 @@ if [[ -n "$SELECTED_BAK" ]]; then
   echo "    Cargando Parquet hacia DuckLake (Bronze, reemplazo total por tabla)..."
   "$BRONZE_PY" bronze/load_parquet.py --src "$PARQUET_OUT" \
     --report-json "$PARQUET_OUT/bronze-load-report.json"
+
+  echo "    Aplicando retención (un solo artefacto) y marca de aplicado..."
+  # Finalización del bootstrap, solo si la ingesta tuvo éxito (si
+  # load_parquet.py fallaba, `set -e` ya habría abortado antes de llegar acá).
+  # Reusa orchestration/kavos_acquire como el flow: retention deja un solo
+  # artefacto fechado (el .bak extraído es derivado y se regenera) y
+  # pipeline.mark_applied registra lo ingerido para la guarda de antigüedad.
+  # Nunca aborta el bootstrap si esto falla, pero avisa FUERTE por stderr.
+  ORCH_PY="/workspace/orchestration/.venv/bin/python"
+  if ! ACQUIRE_STATE_PATH="${ACQUIRE_STATE_PATH:-/workspace/orchestration/.acquire_state.json}" \
+      ACQUIRE_FINAL_DIR="${ACQUIRE_FINAL_DIR:-/workspace/mssql-backup}" \
+      BOOTSTRAP_ARCHIVE="${NEWEST_TAR:-}" \
+      BOOTSTRAP_BAK="${SELECTED_BAK:-}" \
+      PYTHONPATH="/workspace/orchestration${PYTHONPATH:+:$PYTHONPATH}" \
+      "$ORCH_PY" - <<'PYEOF'
+import os
+import sys
+from pathlib import Path
+from kavos_acquire.identity import BackupNameError, parse_backup_id
+from kavos_acquire.pipeline import mark_applied
+from kavos_acquire.retention import (
+    DEFAULT_KEEP,
+    apply_retention,
+    plan_retention,
+    remove_extracted_bak,
+)
+
+final_dir = Path(os.environ.get("ACQUIRE_FINAL_DIR", "/workspace/mssql-backup"))
+# Misma resolución que orchestration/flow.py: os.getenv("ACQUIRE_STATE_PATH",
+# ACQUIRE_STATE_DEFAULT).
+state_path = os.environ.get(
+    "ACQUIRE_STATE_PATH", "/workspace/orchestration/.acquire_state.json")
+archive = os.environ.get("BOOTSTRAP_ARCHIVE", "")
+extraido = os.environ.get("BOOTSTRAP_BAK", "")
+
+# 1. El .bak extraído es derivado del comprimido: se borra y queda el
+#    artefacto de registro. Sin comprimido no se toca nada (sería la única
+#    copia); los fixtures no parsean como fechados y nunca se borran.
+if archive and extraido:
+    if remove_extracted_bak(Path(archive), Path(extraido)):
+        print(f"    Bootstrap: borrado .bak derivado {Path(extraido).name}")
+# 2. Poda a un solo artefacto fechado (misma función que usa el flow).
+plan = plan_retention(final_dir, keep=DEFAULT_KEEP)
+for _identidad, ruta in apply_retention(plan):
+    print(f"    Bootstrap: podado artefacto anterior {ruta.name}")
+print(f"    Bootstrap: retención {plan.describe()}")
+# 3. Marca de aplicado sobre el artefacto de registro (el comprimido cuando
+#    existe, como hace el flow con el source extraído); sin marca la guarda
+#    de antigüedad no tiene referencia y aceptaría cualquier artefacto.
+candidato = archive if archive else extraido
+try:
+    identidad = parse_backup_id(Path(candidato).name)
+except BackupNameError as exc:
+    print(f"ADVERTENCIA bootstrap: no se pudo registrar el aplicado "
+          f"({exc}); la guarda de antigüedad sigue sin referencia",
+          file=sys.stderr)
+    sys.exit(1)
+mark_applied(state_path, identidad)
+print(f"    Bootstrap: aplicado {identidad.filename} registrado en {state_path}")
+PYEOF
+  then
+    echo "ADVERTENCIA: falló la finalización del bootstrap (retención o marca de aplicado); revisá los mensajes de arriba: puede haber quedado el .bak derivado en mssql-backup/ o el estado sin aplicado" >&2
+  fi
 else
   echo "    Sin archivos .bak/.tar en ./mssql-backup/ (se omite ingesta MSSQL)."
 fi

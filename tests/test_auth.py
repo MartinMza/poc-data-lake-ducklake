@@ -59,7 +59,11 @@ def test_valid_api_key_reaches_the_endpoint(client):
 
 
 def test_mcp_mount_requires_credentials(client):
-    response = client.get("/mcp/sse")
+    # Streamable HTTP: el mount vive en /mcp (SSE quedó legacy y Antigravity, por
+    # ejemplo, sólo acepta Streamable HTTP). La ruta se verifica con POST porque
+    # es el método del transporte; sin credencial el middleware responde 401
+    # antes de rutear.
+    response = client.post("/mcp", json={})
     assert response.status_code == 401
 
 

@@ -4,7 +4,7 @@
 > tenés que ver para saber que salió bien. Si algo no coincide, andá directo a
 > [Cuando algo falla](#cuando-algo-falla) y no leas el resto.
 
-**Qué es esto**: un lakehouse local que copia 7 tablas de SQL Server a un Data
+**Qué es esto**: un lakehouse local que copia el catálogo de SQL Server a un Data
 Lake con formato abierto (DuckLake sobre Parquet en S3), y las expone por API
 REST y por MCP. No hay datos generados: lo que ves es lo que vino de SQL Server.
 
@@ -23,7 +23,8 @@ bronze/.venv/bin/python scripts/lake_counts.py             # 2. ¿hay datos?
 Qué esperar:
 
 1. `mssql`, `postgres-catalog`, `garage`, `prefect-server` en `Up (healthy)`. La API puede o no estar: se levanta aparte.
-2. Las **7 tablas `mssql_*`** y ~485.557 filas en total.
+2. Las **tablas `mssql_*`** del catálogo completo (~788 y ~23,2 M de filas en la
+   última corrida verificada).
 3. `39 passed` en ~5 segundos.
 
 Si los tres dan bien, podés saltear el resto del manual y volver cuando
@@ -34,7 +35,11 @@ necesites tocar algo.
 ## El mapa mental (una sola imagen)
 
 ```
-   .bak de SQL Server (7,5 GB)
+   Gmail (aviso de Finnegans con link S3 presignado)
+            │
+            │  acquire (poller IMAP → descarga verificada a mssql-backup/)
+            ▼
+   mssql-backup/<dump>.bak.tar.gz (~1,2 GB, retención: uno solo)
             │
             │  bak2parquet (restaura temporal, extrae a Parquet, limpia)
             ▼
@@ -51,7 +56,7 @@ necesites tocar algo.
 
 Tres ideas que explican todo lo demás:
 
-- **Un solo camino de datos**: `.bak` → SQL Server → `bronze`. No hay capas
+- **Un solo camino de datos**: Gmail → `mssql-backup/` → SQL Server → `bronze`. No hay capas
   intermedias ni transformaciones de negocio.
 - **Dos bases distintas**: Postgres guarda *metadatos* del catálogo (qué tablas
   y archivos existen), no los datos. Los datos son Parquet en Garage.
@@ -70,26 +75,26 @@ Tres ideas que explican todo lo demás:
 | `prefect-server` | 4200 | UI/API de la orquestación | abrí http://localhost:4200 |
 | `lake-api` | 8000 | API REST + MCP | http://localhost:8000/health → `200` |
 | `lake-init` | — | job de una sola vez: restore + ingesta | corre y termina |
+| `prefect-serve` | — | sirve el flow con schedule (cron de `ACQUIRE_POLL_HOURS`, default cada 4 h) | `docker compose ps prefect-serve` → `Up`; si no baja nada, ver tabla de fallas |
 
 La API y el job de init usan los mismos puertos internos que el host: si algo
 ya está escuchando en 8000, `lake-api` no arranca.
 
 ---
 
-## Los datos: 7 tablas y nada más
+## Los datos: el catálogo completo de la base
 
-| Tabla | Filas | Qué es |
-|---|---|---|
-| `bronze.mssql_bs_transaccion` | 320.447 | transacciones |
-| `bronze.mssql_bs_operacion` | 148.356 | operaciones (170 columnas) |
-| `bronze.mssql_bs_producto` | 9.342 | productos |
-| `bronze.mssql_d_mart_ventas_producto_cliente` | 4.065 | ventas por producto/cliente |
-| `bronze.mssql_bs_organizacion` | 3.055 | organizaciones |
-| `bronze.mssql_d_mart_ventas` | 275 | resumen de ventas |
-| `bronze.mssql_bs_moneda` | 17 | monedas |
+Bronze contiene **todas las tablas de usuario** de la base restaurada, no un
+subset: el extractor descubre el catálogo y no hay allowlist. Cada carga
+reemplaza cada tabla entera (idempotente, sin ventanas ni modos por tabla).
 
-Bronze contiene solo las 7 tablas `mssql_*`: cada carga reemplaza cada tabla
-entera (idempotente, sin ventanas ni modos por tabla).
+Última corrida verificada (backup del 2026-11-03): **788 tablas y 23.225.319
+filas**. Esos números cambian con cada backup, así que consultalos:
+
+```bash
+bronze/.venv/bin/python scripts/lake_counts.py          # conteo por tabla
+curl -s -H "X-API-Key: $AUTH_API_KEYS" localhost:8000/api/v1/sqlserver/tables
+```
 
 **Regla de nombres**: el cargador normaliza todo a `snake_case`
 (`TransaccionID` → `transaccion_id`). Si buscás un nombre en CamelCase, no está.
@@ -126,7 +131,7 @@ Es **fail-closed**: sin credenciales válidas ninguna request de datos pasa.
 
 | Endpoint | Qué devuelve |
 |---|---|
-| `GET /api/v1/sqlserver/tables` | inventario de las 7 tablas, con filas y columnas |
+| `GET /api/v1/sqlserver/tables` | inventario de tablas del catálogo, con filas y columnas |
 | `GET /api/v1/sqlserver/tables/{tabla}/rows?limit=N` | filas paginadas (`limit` ≤ 1000) |
 | `GET /api/v1/tables` | catálogo observable del lake |
 | `GET /api/v1/snapshots` | snapshots de DuckLake (time travel) |
@@ -142,8 +147,36 @@ Dos defensas que conviene conocer:
 
 | Transporte | Cómo se autentica | Cuándo usarlo |
 |---|---|---|
-| HTTP/SSE en `http://localhost:8000/mcp/sse` | header `X-API-Key` o Bearer | agentes y clientes remotos |
+| Streamable HTTP en `http://localhost:8000/mcp` | header `X-API-Key` o Bearer | agentes y clientes remotos (Antigravity, Cursor, nginx) |
 | stdio: `python -m kavos_lake.adapters.inbound.mcp.server` | **sin auth** (corre como tu proceso) | Claude Desktop y similares en tu máquina |
+
+### Exponer el MCP por nginx
+
+El transporte es Streamable HTTP, así que un proxy inverso alcanza con
+`proxy_pass`. Tres detalles que no son opcionales:
+
+```nginx
+location /mcp {
+    proxy_pass http://127.0.0.1:8000/mcp;   # sin reescribir el path
+    proxy_http_version 1.1;
+    proxy_set_header Host $host;
+    proxy_set_header X-API-Key $http_x_api_key;   # propaga la credencial
+
+    # El MCP responde en streaming: sin esto nginx acumula y el cliente se cuelga.
+    proxy_buffering off;
+    proxy_cache off;
+    # `sqlserver_tables` recorre las 788 tablas del catálogo: tarda minutos.
+    proxy_read_timeout 600s;
+    proxy_send_timeout 600s;
+}
+```
+
+Si escalás a más de una réplica, el Streamable HTTP mantiene sesión por cliente:
+necesitás afinidad (sticky sessions) o `stateless_http=True` en el sub-app.
+
+El cliente apunta a `https://<host>/mcp` con el header `X-API-Key`. Las API keys
+viven en la base de credenciales, no en el `.env`, y vencen a los 180 días como
+máximo: hay que rotarlas antes.
 
 Herramientas: `sqlserver_tables`, `list_tables`, `describe_table`,
 `preview_rows`, `run_query`, `list_snapshots`.
@@ -162,7 +195,10 @@ Eso es por diseño, no un olvido.
 | levantar sólo la API | `./scripts/run_api.sh --host` | valida auth antes de arrancar |
 | levantar la API en Docker | `docker compose up -d lake-api` | no usar `up -d` a secas (ver trampas) |
 | ver si hay datos | `bronze/.venv/bin/python scripts/lake_counts.py` | usa el venv de bronze |
-| correr la orquestación | `orchestration/.venv/bin/python orchestration/flow.py` | necesita `PREFECT_API_URL` y `MSSQL_BAK_PATH` |
+| correr la orquestación | `orchestration/.venv/bin/python orchestration/flow.py` | adquiere el `.bak` del correo; sin `ACQUIRE_*` usa `MSSQL_BAK_PATH` |
+| bajar el backup solo, con schedule | `orchestration/.venv/bin/python orchestration/serve.py` | cron según `ACQUIRE_POLL_HOURS` (default 4 h) |
+| podar backups viejos | `orchestration/.venv/bin/python scripts/prune_backups.py` | deja **un** backup; dry-run por defecto, `--apply` borra |
+| automatizar la ingesta | `docker compose up -d prefect-serve` | exige `ACQUIRE_IMAP_*` en `.env`; corre cada `ACQUIRE_POLL_HOURS`; tras cambiar código, `build` **antes** de recrear (ver "código viejo" en fallas) |
 | restaurar el `.bak` | `./scripts/restore_mssql.sh <archivo>.bak FAF12_Kavos` | idempotente, usa `REPLACE` |
 | limpiar datos sintéticos viejos | `bronze/.venv/bin/python scripts/purge_sample_data.py` | dry-run por defecto; `--apply` ejecuta |
 | generar una API key | `openssl rand -hex 24` | 24 caracteres mínimo |
@@ -173,6 +209,57 @@ Eso es por diseño, no un olvido.
 El resto (`bootstrap.sh`, `smoke_ducklake.py`, `s3_sync.py`,
 `timetravel_check.py`, `container_init.sh`) es infraestructura: se usa al
 montar el stack o desde Docker, no en el día a día.
+
+---
+
+## La adquisición automática del backup
+
+El flow arranca con `acquire`, antes de `bak-extract`: un poller IMAP lee el
+buzón de Gmail, busca el aviso de `info@finnegans.com.ar` con asunto `Backup
+de Base de Datos Disponible`, saca el link S3 presignado del cuerpo HTML, lo
+descarga (~1,2 GB `.bak.tar.gz`) con resume y verificación CRC32, y recién
+entonces poda el backup anterior. Después sigue `bak-extract` →
+`bronze-load`. Sin `ACQUIRE_IMAP_USER` o `ACQUIRE_LINK_HOSTS`, `acquire` se
+salta en éxito y `bak-extract` usa `MSSQL_BAK_PATH` o el artefacto más nuevo
+en disco: con la adquisición configurada **no** hay que reapuntar
+`MSSQL_BAK_PATH` al `.bak` del día, el flow toma lo que `acquire` trajo.
+
+El scheduler es el servicio `prefect-serve` (`docker compose up -d
+prefect-serve`, `restart: unless-stopped`): reusa la imagen
+`kavos-lake-pipeline` y sirve el flow con un cron derivado de
+`ACQUIRE_POLL_HOURS` (default `0 */4 * * *`). El estado vive en el volumen
+`serve-state`: si se pierde, la guarda de antigüedad olvida el último backup
+aplicado y puede volver a cargar uno viejo. Con el servicio corriendo, no
+lances `flow.py` a mano: compiten por el mismo estado.
+
+`./configure.sh` trae una sección `[5/5]` que pide la cuenta de Gmail, la app
+password (no se muestra al tipearla), la allowlist de hosts, cuántos días
+hacia atrás buscar y cuántos backups dejar; con la cuenta vacía la
+adquisición queda desactivada y seguís cargando el `.bak` a mano.
+`./configure.sh --check` dice si quedó activa o incompleta (una adquisición a
+medias se salta en éxito y no baja nada).
+
+### Variables de la adquisición
+
+| Variable | Default | Qué hace |
+|---|---|---|
+| `ACQUIRE_IMAP_USER` | *(vacío = desactivada)* | cuenta de Gmail que recibe el aviso; vacía → `acquire` se salta en éxito |
+| `ACQUIRE_IMAP_APP_PASSWORD` | *(vacía)* | app password de Gmail (16 caracteres, con verificación en dos pasos; la contraseña normal no sirve para IMAP) |
+| `ACQUIRE_FROM` | `info@finnegans.com.ar` | remitente del aviso, comparado por dirección exacta, no por sufijo |
+| `ACQUIRE_SUBJECT_PATTERN` | `Backup de Base de Datos Disponible` | asunto del aviso, evaluado como regex sobre el Subject |
+| `ACQUIRE_LINK_HOSTS` | *(vacía)* | allowlist de hosts de descarga, separados por comas, sólo `https`; un link de otro host no se baja |
+| `ACQUIRE_POLL_HOURS` | `4` | cada cuántas horas corre el poller; `serve.py` deriva el cron (`0 */4 * * *`) |
+| `ACQUIRE_SINCE_DAYS` | `3` | días hacia atrás que busca en el buzón (`IMAP SINCE`); menor que la validez de la firma (12 h) para no traer correos ya indescargables |
+| `ACQUIRE_KEEP_BACKUPS` | `1` | cuántos artefactos fechados quedan en `mssql-backup/`; `1` = el nuevo reemplaza al anterior tras verificar checksum |
+| `ACQUIRE_MIN_WINDOW_SECONDS` | `1800` | ventana restante mínima exigida a la firma presignada para intentar la descarga; si no alcanza, falla pidiendo un link nuevo |
+| `ACQUIRE_STATE_PATH` | `orchestration/.acquire_state.json` (en compose: `/workspace/state/.acquire_state.json`, volumen `serve-state`) | estado persistido: Message-IDs, UIDs y último backup aplicado (nunca URLs) |
+| `ACQUIRE_INCOMING_DIR` | `mssql-backup/.incoming` | dónde se descarga en vuelo (`.part`); lo que no verifica nunca llega al destino final |
+| `ACQUIRE_FINAL_DIR` | `mssql-backup` | dónde queda commiteado el artefacto verificado |
+
+**Regla de operación**: después de cambiar código, `docker compose build
+prefect-serve` **antes** de `docker compose up -d --force-recreate
+prefect-serve`. Recrear sin buildear deja el contenedor corriendo el código
+viejo, y eso ya costó una ronda de debugging.
 
 ---
 
@@ -194,6 +281,16 @@ Buscá tu síntoma. Si no está acá, el log del servicio suele decir la verdad:
 | 401 al loguear con password con `ñ` | el password no coincide | es correcto: credencial inválida, nunca un 500 |
 | los tests fallan por datos faltantes | stack abajo o lake vacío | pasos 1, 2 y 3 de "5 minutos" |
 | el `.bak` no aparece | está en `mssql-backup/` con otro nombre | `ls mssql-backup/` |
+| *la ventana de la firma insuficiente* | el link presignado dura 12 h (`X-Amz-Expires=43200`) | pedir un link nuevo; con `X-Amz-Expires=604800` (7 días) la falla desaparece |
+| *host fuera de la allowlist* | `ACQUIRE_LINK_HOSTS` no incluye el bucket | agregar el host exacto, nunca un comodín libre |
+| el scheduler corre pero no baja nada | `ACQUIRE_IMAP_USER` vacío: `acquire` se salta en éxito | cargar `ACQUIRE_IMAP_USER` y `ACQUIRE_IMAP_APP_PASSWORD` en `.env` y recrear el servicio |
+| el poller no encuentra nunca el correo | remitente o asunto no coinciden | el aviso real es de `info@finnegans.com.ar` con asunto `Backup de Base de Datos Disponible`; son los defaults de `kavos_acquire/defaults.py` |
+| *backup descartado por antigüedad* | el artefacto no es más nuevo que el último aplicado | es correcto: mirá qué correo se está procesando |
+| *estado corrupto* en `.acquire_state.json` | JSON ilegible | revisarlo a mano; borrarlo **desactiva** la guarda de antigüedad |
+| *espacio insuficiente* | ~7,5 GB por backup sin podar | `prune_backups.py --apply` y reintentar |
+| `gdown`/WeTransfer rechazado | proveedor de link no soportado a propósito | pedir envío por S3 presignado o carpeta SharePoint |
+| *sin tablas en `parquet-out`* | `bak-extract` se saltó (sin `.bak` nuevo) o falló antes de escribir | mirar el log de `bak-extract`: si no hubo `.bak` nuevo no hay nada que cargar; no reintentar sólo la carga |
+| *el contenedor corre código viejo* | se recreó `prefect-serve` sin buildear | `docker compose build prefect-serve` **antes** de `docker compose up -d --force-recreate prefect-serve`, siempre |
 
 ---
 
@@ -361,7 +458,7 @@ Ojo: eso borra usuarios y keys. Los datos del lake no se tocan.
 ## Checklist de sistema sano
 
 - [ ] Los 4 servicios base en `healthy`.
-- [ ] `lake_counts.py` muestra 7 tablas `mssql_*` y ~485.557 filas.
+- [ ] `lake_counts.py` muestra las tablas `mssql_*` del catálogo con filas > 0.
 - [ ] `/health` responde 200 sin credencial.
 - [ ] `/api/v1/sqlserver/tables` responde 401 sin credencial y 200 con key.
 - [ ] `.venv/bin/python -m pytest -q` da 191 passed.

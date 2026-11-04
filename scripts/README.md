@@ -43,6 +43,24 @@ Actualizar: cambiar el tag en `docker-compose.yml` (o el pin en
 bootstrap + smoke. Sin lockfiles adicionales en este slice: las imágenes
 son el único artefacto versionado del stack.
 
+## Retención de backups (`mssql-backup/`)
+
+```bash
+orchestration/.venv/bin/python scripts/prune_backups.py                 # dry-run, conserva el más nuevo (keep=1)
+orchestration/.venv/bin/python scripts/prune_backups.py --keep 3        # dry-run conservando 3
+orchestration/.venv/bin/python scripts/prune_backups.py --apply         # borra el excedente
+PRUNE_DIR=/otra/ruta orchestration/.venv/bin/python scripts/prune_backups.py --apply
+```
+
+Conserva el backup nuevo (`ACQUIRE_KEEP_BACKUPS`, default 1: queda **un** solo
+artefacto fechado) **por la fecha del nombre** (nunca por mtime), ignora lo que
+no parsea como backup (`test-source.bak`, `bak2pq-synth.bak` y fixtures quedan
+intactos) y nunca baja a `mssql-backup/.incoming/` (`.part` en vuelo). La poda
+automática del flow usa esta misma implementación
+(`orchestration/kavos_acquire/retention.py`), y corre sólo después de que el
+artefacto nuevo verificó checksum y quedó commiteado. Dry-run por defecto: sin
+`--apply` solo muestra el plan.
+
 ## Notas de diseño
 
 - Garage en nodo único con `replication_factor = 1` (ver `docker/garage.toml`);
