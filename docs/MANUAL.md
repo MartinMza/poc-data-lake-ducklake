@@ -36,11 +36,11 @@ necesites tocar algo.
 ```
    .bak de SQL Server (7,5 GB)
             │
-            │  restore_mssql.sh
+            │  bak2parquet (restaura temporal, extrae a Parquet, limpia)
             ▼
-      SQL Server (mssql:1433)
+   Parquet (`<salida>/<esquema>/<tabla>.parquet`, ZSTD)
             │
-            │  bronze/fast_mssql.py  (bcp → staging → MERGE)
+            │  bronze/load_parquet.py (reemplazo total por tabla)
             ▼
    DuckLake: Parquet en Garage S3 + metadatos en Postgres
             │
@@ -88,10 +88,10 @@ ya está escuchando en 8000, `lake-api` no arranca.
 | `bronze.mssql_d_mart_ventas` | 275 | resumen de ventas |
 | `bronze.mssql_bs_moneda` | 17 | monedas |
 
-Más tres tablas internas de `dlt` (`_dlt_loads`, `_dlt_pipeline_state`,
-`_dlt_version`) que son bookkeeping: no las consultes, no son datos.
+Bronze contiene solo las 7 tablas `mssql_*`: cada carga reemplaza cada tabla
+entera (idempotente, sin ventanas ni modos por tabla).
 
-**Regla de nombres**: la ingesta rápida normaliza todo a `snake_case`
+**Regla de nombres**: el cargador normaliza todo a `snake_case`
 (`TransaccionID` → `transaccion_id`). Si buscás un nombre en CamelCase, no está.
 
 ---
@@ -162,7 +162,7 @@ Eso es por diseño, no un olvido.
 | levantar sólo la API | `./scripts/run_api.sh --host` | valida auth antes de arrancar |
 | levantar la API en Docker | `docker compose up -d lake-api` | no usar `up -d` a secas (ver trampas) |
 | ver si hay datos | `bronze/.venv/bin/python scripts/lake_counts.py` | usa el venv de bronze |
-| correr la orquestación | `orchestration/.venv/bin/python orchestration/flow.py` | necesita `PREFECT_API_URL` y `MSSQL_DATABASE` |
+| correr la orquestación | `orchestration/.venv/bin/python orchestration/flow.py` | necesita `PREFECT_API_URL` y `MSSQL_BAK_PATH` |
 | restaurar el `.bak` | `./scripts/restore_mssql.sh <archivo>.bak FAF12_Kavos` | idempotente, usa `REPLACE` |
 | limpiar datos sintéticos viejos | `bronze/.venv/bin/python scripts/purge_sample_data.py` | dry-run por defecto; `--apply` ejecuta |
 | generar una API key | `openssl rand -hex 24` | 24 caracteres mínimo |
@@ -207,6 +207,7 @@ Buscá tu síntoma. Si no está acá, el log del servicio suele decir la verdad:
 | `scripts/export_gold.py`, `benchmark.py`, `concurrency_check.py` | eliminados |
 | servicio `postgres-source` y `SEED_SCALE` | eliminados del compose |
 | `/api/v1/kpis/*` y las tablas `silver`/`gold` | eliminados con dbt |
+| ingesta directa desde SQL Server | reemplazada por extracción a Parquet + cargador a Bronze |
 
 Si algo te pide dbt o datos de ejemplo, está desactualizado: este repo ya no
 los tiene.
@@ -233,7 +234,7 @@ los tiene.
 | `docs/MANUAL.md` | este manual |
 | `docs/findings*.md` | decisiones, benchmarks y fricciones encontradas |
 | `docs/API.md` | detalle de REST + MCP y configuración de clientes |
-| `bronze/README.md` | cómo ingesta `fast_mssql.py` |
+| `bronze/README.md` | cómo carga `load_parquet.py` a bronze |
 | `orchestration/README.md` | el flow de Prefect |
 | `scripts/README.md` | procedimiento de infraestructura |
 | `odd/tasks/api-auth-mssql-only.md` | spec, tareas y registro de reviews |

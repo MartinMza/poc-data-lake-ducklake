@@ -1,0 +1,40 @@
+# bak2parquet — entorno de ejecución del extractor (S6.2, S1).
+# Python 3.12 + ODBC Driver 18 for SQL Server + mssql-tools18 (sqlcmd),
+# con las dependencias del componente en su venv local (bak2parquet/.venv).
+FROM python:3.12-slim-bookworm
+
+WORKDIR /app
+
+# 1. unixODBC (driver manager) y herramientas para el repo de Microsoft.
+RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+    bash \
+    ca-certificates \
+    curl \
+    gnupg \
+    unixodbc \
+    && rm -rf /var/lib/apt/lists/*
+
+# 2. Microsoft ODBC Driver 18 for SQL Server + mssql-tools18 (mismo origen que Dockerfile.pipeline).
+RUN curl -fsSL https://packages.microsoft.com/keys/microsoft.asc | gpg --dearmor -o /usr/share/keyrings/microsoft-prod.gpg \
+    && curl -fsSL https://packages.microsoft.com/config/debian/12/prod.list > /etc/apt/sources.list.d/mssql-release.list \
+    && apt-get update \
+    && ACCEPT_EULA=Y DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+        msodbcsql18 \
+        mssql-tools18 \
+    && rm -rf /var/lib/apt/lists/*
+
+ENV PATH="/opt/mssql-tools18/bin:${PATH}"
+
+# 3. Deps fijadas del componente en su venv local (convención: bronze/.venv).
+COPY bak2parquet/requirements.txt /app/bak2parquet/requirements.txt
+RUN python -m venv /app/bak2parquet/.venv \
+    && /app/bak2parquet/.venv/bin/pip install --no-cache-dir -r /app/bak2parquet/requirements.txt
+
+# 4. Código del extractor (el .dockerignore ya excluye .venv, .bak y cachés).
+COPY bak2parquet/src /app/bak2parquet/src
+
+ENV PYTHONPATH="/app/bak2parquet/src" \
+    PATH="/app/bak2parquet/.venv/bin:${PATH}" \
+    PYTHONUNBUFFERED=1
+
+ENTRYPOINT ["python", "-m", "bak2parquet"]

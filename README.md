@@ -18,7 +18,7 @@ feliz, los comandos que se usan de verdad y una tabla de fallas comunes.
 ## Arquitectura
 
 ```
-SQL Server (.bak) ──restore──▶ mssql ──bcp/MERGE (fast) o dlt──▶ bronze ──▶ API REST + MCP
+SQL Server (.bak) ──bak2parquet──▶ Parquet ──load_parquet──▶ bronze ──▶ API REST + MCP
                                                                │  DuckLake: catálogo en postgres-catalog + Parquet en Garage (S3)
                                                                ▼
                                               orquestado por Prefect (flow kavos-lake-medallion)
@@ -29,7 +29,7 @@ SQL Server (.bak) ──restore──▶ mssql ──bcp/MERGE (fast) o dlt─�
 |---|---|---|
 | Infra | `postgres-catalog` :5433, Garage S3 :3900–3903, `prefect-server` :4200, `mssql` :1433 | `docker-compose.yml`, `scripts/bootstrap.sh` |
 | Origen real | `.bak` de SQL Server restaurado (7 tablas del subset: `BSMoneda`, `BSProducto`, `BSOrganizacion`, `BSTransaccion`, `BSOperacion`, `DMart_Ventas`, `DMart_VentasProductoCliente`) | `mssql-backup/` (gitignored), `scripts/restore_mssql.sh` |
-| Ingesta bronze | `bronze/fast_mssql.py` (principal: bcp → staging → MERGE) y `bronze/pipeline_mssql.py` (fallback dlt) | `bronze/` |
+| Ingesta bronze | `bak2parquet/` (.bak → Parquet) + `bronze/load_parquet.py` (Parquet → DuckLake, reemplazo total) | `bronze/`, `bak2parquet/` |
 | Purga de data de ejemplo | deja solo las 7 tablas reales (dry-run por defecto) | `scripts/purge_sample_data.py` |
 | Orquestación | Flow `kavos-lake-medallion`: restore condicional → ingesta MSSQL | `orchestration/` |
 | Servicio | API REST (FastAPI) + MCP (FastMCP) con auth obligatoria | `src/kavos_lake/` |
@@ -40,7 +40,7 @@ Layout del código, puertos/adaptadores y regla de dependencia:
 
 Versiones fijadas: `postgres:17.6-bookworm`, `dxflrs/garage:v2.4.1`,
 `prefecthq/prefect:3.6.22-python3.12` (server) / `prefect==3.8.8` (cliente),
-`duckdb==1.5.6` (DuckLake 1.0), `dlt==1.31.0`,
+`duckdb==1.5.6` (DuckLake 1.0), `pyarrow==21.0.0`,
 `kavos-lake-mssql:2022-CU27`.
 
 ## Configuración de Entorno (.env)
@@ -70,18 +70,19 @@ cp .env.example .env   # completar AUTH_API_KEYS / AUTH_USERS / AUTH_JWT_SECRET
 docker compose up -d
 ./scripts/bootstrap.sh
 
-# 1. Restaurar el .bak de SQL Server (idempotente, REPLACE)
-./scripts/restore_mssql.sh FAF12_Kavos_2026_10_07_233301_411720.bak FAF12_Kavos
+# 1. Extraer el .bak a Parquet (restaura temporal y limpia al terminar)
+PYTHONPATH=bak2parquet/src bronze/.venv/bin/python -m bak2parquet --engine url \
+  --bak mssql-backup/<dump-del-dia>.bak --out parquet-out
 
-# 2. Ingesta bronze (venv propio)
+# 2. Cargar el Parquet en Bronze (venv propio, reemplazo total por tabla)
 uv venv bronze/.venv --python 3.12
 uv pip install -p bronze/.venv/bin/python -r bronze/requirements.txt
-MSSQL_DATABASE=FAF12_Kavos bronze/.venv/bin/python bronze/fast_mssql.py all --full
+bronze/.venv/bin/python bronze/load_parquet.py --src parquet-out
 
 # 3. Orquestación (registra en prefect-server)
 uv venv orchestration/.venv --python 3.12
 uv pip install -p orchestration/.venv/bin/python -r orchestration/requirements.txt
-PREFECT_API_URL=http://localhost:4200/api MSSQL_DATABASE=FAF12_Kavos \
+PREFECT_API_URL=http://localhost:4200/api MSSQL_BAK_PATH="mssql-backup/<dump-del-dia>.bak" \
   orchestration/.venv/bin/python orchestration/flow.py
 
 # 4. API + MCP
@@ -135,8 +136,8 @@ MCP: `sqlserver_tables`, `list_tables`, `describe_table`, `preview_rows`,
 | `DMart_Ventas` | 275 | `bronze.mssql_d_mart_ventas` |
 | `DMart_VentasProductoCliente` | 4 065 | `bronze.mssql_d_mart_ventas_producto_cliente` |
 
-Total: 485 557 filas. `merge` por PK en las 5 tablas con PK y `replace` en las
-2 DMart. El fast path normaliza los nombres de columna a `snake_case`.
+Total: 485 557 filas. Cada backup se extrae completo y cada tabla se reemplaza
+entera (idempotente). Tablas y columnas en `snake_case`.
 
 ## Resultados históricos del PoC (data sintética, ya retirada)
 
@@ -163,7 +164,7 @@ lineal, no materializado. Lectura clave: 50 GB nominales ≈ 5,3 GB de Parquet
 |---|---|
 | Auth | `tests/test_auth.py` 14 tests (key, JWT, expiración, firma inválida, `/health` público, fail-closed) |
 | API/MCP sobre data real | `tests/test_api_mcp.py` 16 tests (bronze-only, inventario SQL Server, paginado, guardrails, tools/recursos) |
-| Ingesta MSSQL | 7 tablas, 485 557 filas, paridad fast vs dlt verificada (`bronze/fast_ground_truth.json`) |
+| Ingesta bronze | 7 tablas, 485 557 filas (backup completo → Parquet → reemplazo total por tabla) |
 | Purga de data de ejemplo | `purge_sample_data.py --apply` + re-ejecución idempotente ("nada que purgar") |
 | Backup/restore del lago | dump + espejo + manifold verificado (14/14 conteos en el ciclo histórico) |
 | Time travel | `AT (VERSION => N)` sobre tablas propias del checkscript |

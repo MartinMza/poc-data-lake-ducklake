@@ -3,9 +3,11 @@
 Flow único `kavos-lake-medallion` (`orchestration/flow.py`), lineal y de una sola
 rama, porque la única fuente de datos es SQL Server:
 
-1. **`bak-watch-restore`** — restore condicional del `.bak`.
-2. **`mssql-ingest`** — ingesta bronze (fast path `fast_mssql.py`, o dlt con
-   `FAST_MSSQL_MODE=dlt`).
+1. **`bak-watch-restore`** — detecta un `.bak` nuevo y actualiza la marca del
+   último restore exitoso.
+2. **`bak-extract`** — extrae el backup completo a Parquet con `bak2parquet`
+   (motor efímero acotado en memoria).
+3. **`bronze-load`** — carga ese Parquet en DuckLake Bronze (`load_parquet.py`).
 
 Fail-stop: si el restore falla, la ingesta no corre. Cada `@task` tiene
 reintentos configurables y logs centralizados en Prefect.
@@ -14,7 +16,7 @@ reintentos configurables y logs centralizados en Prefect.
 
 | Archivo | Qué es |
 |---|---|
-| `flow.py` | Flow + 2 tasks (`bak-watch-restore`, `mssql-ingest`); entrypoint único |
+| `flow.py` | Flow + 3 tasks (`bak-watch-restore`, `bak-extract`, `bronze-load`); entrypoint único |
 | `requirements.txt` | `prefect==3.8.8` (cliente) |
 | `.venv/` | Venv propio solo con prefect (no commitear; `uv venv`) |
 | `.last_restore.json` | Marca del último restore exitoso (path+mtime+size+DB); local, gitignored |
@@ -32,9 +34,8 @@ tocar código (defaults = `docker-compose.yml` / `.env.example`):
 | `PREFECT_API_URL` | `http://localhost:4200/api` | sin setear, el flow corre efímero |
 | `MSSQL_BAK_PATH` | *(sin definir)* | `.bak`/`.tar` a vigilar; sin definir, el restore se salta con warning |
 | `MSSQL_DATABASE` | `FAF12_Kavos` | DB destino del restore y origen de la ingesta |
-| `MSSQL_TABLES` | las 7 tablas reales | subset `Tabla:pk:estrategia,...` |
-| `FAST_MSSQL_MODE` | `fast` | `fast` = bcp→staging→MERGE; `dlt` = fallback |
-| `FAST_MSSQL_WINDOW_DAYS` | `15` | ventana incremental de `BSTransaccion` |
+| `BAK2PARQUET_BATCH_SIZE` | `50000` | filas por batch Arrow en la extracción |
+| `BAK2PARQUET_MAX_TEXT_SIZE` / `BAK2PARQUET_MAX_BINARY_SIZE` | defaults del paquete | cotas de buffers para columnas `MAX` |
 | `BRONZE_PYTHON` | `bronze/.venv/bin/python` | intérprete de la ingesta |
 | `ORCH_TASK_RETRIES` / `ORCH_TASK_RETRY_DELAY_SECONDS` | `2` / `30` | reintentos por tarea |
 | `ORCH_RESTORE_MARK` | `orchestration/.last_restore.json` | marca del último restore |

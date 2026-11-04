@@ -3,8 +3,10 @@
 #
 # Se ejecuta automáticamente en el servicio `lake-init` al levantar el stack:
 #   1. Crea la base del catálogo DuckLake si no existe
-#   2. Si hay un .tar o .bak en ./mssql-backup/, lo descomprime y lo restaura en SQL Server
-#   3. Ingesta esas tablas en Bronze (fast path bcp/MERGE; dlt como fallback)
+#   2. Si hay un .tar o .bak en ./mssql-backup/, lo descomprime y elige el .bak
+#   3. Extrae el .bak a Parquet (`bak2parquet --engine url`, restaura temporal
+#      en SQL Server y limpia al terminar) y lo carga en Bronze
+#      (`bronze/load_parquet.py`, reemplazo total por tabla)
 #   4. Muestra el conteo final del lago en los logs de Portainer
 # La única fuente de datos es SQL Server: no hay seed sintético ni capas dbt.
 
@@ -24,6 +26,7 @@ export GARAGE_S3_PORT="${GARAGE_S3_PORT:-3900}"
 
 MSSQL_HOST="${MSSQL_HOST:-mssql}"
 MSSQL_PORT="${MSSQL_PORT:-1433}"
+MSSQL_USER="${MSSQL_USER:-sa}"
 MSSQL_SA_PASSWORD="${MSSQL_SA_PASSWORD:-Str0ng!PoC-Local01}"
 
 echo "================================================================="
@@ -70,65 +73,33 @@ fi
 
 if [[ -n "$SELECTED_BAK" ]]; then
   BAK_BASENAME="$(basename "$SELECTED_BAK")"
-  CONT_BAK="/var/opt/mssql/backup/$BAK_BASENAME"
   echo "    Backup detectado: $BAK_BASENAME"
 
-  SQLCMD=(/opt/mssql-tools18/bin/sqlcmd -S "${MSSQL_HOST},${MSSQL_PORT}" -U sa -P "$MSSQL_SA_PASSWORD" -C -b -l 30)
-  for _ in $(seq 1 30); do
-    if "${SQLCMD[@]}" -Q "SELECT 1" >/dev/null 2>&1; then
-      break
-    fi
-    sleep 2
-  done
-
-  if [[ -n "${MSSQL_DATABASE:-}" ]]; then
-    TARGET_DB="$MSSQL_DATABASE"
-  elif [[ "$BAK_BASENAME" == FAF12_Kavos* ]]; then
-    TARGET_DB="FAF12_Kavos"
-  elif [[ "$BAK_BASENAME" == "test-source.bak" ]]; then
-    TARGET_DB="RestoredProof"
-  else
-    TARGET_DB="$(printf '%s' "${BAK_BASENAME%.bak}" | tr -c 'A-Za-z0-9_' '_')"
+  echo "==> [3/4] Extrayendo $BAK_BASENAME a Parquet (restaura temporal y limpia)..."
+  export PYTHONPATH="/workspace/bak2parquet/src${PYTHONPATH:+:$PYTHONPATH}"
+  BRONZE_PY="/workspace/bronze/.venv/bin/python"
+  if ! "$BRONZE_PY" -c "import bak2parquet, arrow_odbc" 2>/dev/null; then
+    echo "    Instalando dependencias del extractor en el venv bronze..."
+    uv pip install -q -p "$BRONZE_PY" -r /workspace/bak2parquet/requirements.txt
   fi
+  PARQUET_OUT="${PARQUET_OUT:-/workspace/parquet-out}"
+  mkdir -p "$PARQUET_OUT"
+  # El password viaja por env (MSSQL_SA_PASSWORD), nunca en la línea de comandos.
+  # --bak-path es la ruta vista por el motor (./mssql-backup está montado en
+  # /var/opt/mssql/backup del servicio mssql).
+  "$BRONZE_PY" -m bak2parquet --engine url \
+    --bak "$SELECTED_BAK" \
+    --bak-path "/var/opt/mssql/backup/$BAK_BASENAME" \
+    --out "$PARQUET_OUT" \
+    --mssql-host "$MSSQL_HOST" --mssql-port "$MSSQL_PORT" --mssql-user "$MSSQL_USER" \
+    --batch-size "${BAK2PARQUET_BATCH_SIZE:-50000}" \
+    --max-text-size "${BAK2PARQUET_MAX_TEXT_SIZE:-8388608}" \
+    --max-binary-size "${BAK2PARQUET_MAX_BINARY_SIZE:-8388608}" \
+    --report-json "$PARQUET_OUT/report.json"
 
-  DB_ONLINE="$("${SQLCMD[@]}" -h -1 -W -Q "SET NOCOUNT ON; SELECT state_desc FROM sys.databases WHERE name = N'$TARGET_DB';" 2>/dev/null | tr -d '[:space:]' || true)"
-  if [[ "$DB_ONLINE" != "ONLINE" ]]; then
-    echo "    Restaurando $BAK_BASENAME en SQL Server [$TARGET_DB]..."
-    DATA_DIR="$("${SQLCMD[@]}" -h -1 -W -Q "SET NOCOUNT ON; SELECT SERVERPROPERTY('InstanceDefaultDataPath');" | tr -d '[:space:]')"
-    LOG_DIR="$("${SQLCMD[@]}" -h -1 -W -Q "SET NOCOUNT ON; SELECT SERVERPROPERTY('InstanceDefaultLogPath');" | tr -d '[:space:]')"
-    MOVES=()
-    DATA_N=0
-    while IFS=',' read -r logical _physical ftype _rest; do
-      logical="$(echo "$logical" | xargs)"
-      ftype="$(echo "$ftype" | xargs)"
-      [[ -n "$logical" ]] || continue
-      case "$ftype" in
-        D)
-          DATA_N=$((DATA_N + 1))
-          ext="ndf"; [[ $DATA_N -eq 1 ]] && ext="mdf"
-          dest="${DATA_DIR}${TARGET_DB}_$(printf '%s' "$logical" | tr -c 'A-Za-z0-9_-' '_').$ext"
-          ;;
-        L)
-          dest="${LOG_DIR}${TARGET_DB}_$(printf '%s' "$logical" | tr -c 'A-Za-z0-9_-' '_').ldf"
-          ;;
-        *) continue ;;
-      esac
-      MOVES+=("MOVE N'${logical//\'/\'\'}' TO N'$dest'")
-    done < <("${SQLCMD[@]}" -h -1 -W -s "," -Q "SET NOCOUNT ON; RESTORE FILELISTONLY FROM DISK = N'$CONT_BAK';")
-    MOVE_CLAUSE="$(IFS=', '; echo "${MOVES[*]}")"
-    "${SQLCMD[@]}" -Q "IF DB_ID(N'$TARGET_DB') IS NOT NULL ALTER DATABASE [$TARGET_DB] SET SINGLE_USER WITH ROLLBACK IMMEDIATE; RESTORE DATABASE [$TARGET_DB] FROM DISK = N'$CONT_BAK' WITH $MOVE_CLAUSE, REPLACE, RECOVERY; ALTER DATABASE [$TARGET_DB] SET MULTI_USER;"
-  else
-    echo "    Base [$TARGET_DB] ya está ONLINE en SQL Server."
-  fi
-
-  export MSSQL_DATABASE="$TARGET_DB"
-  if [[ -z "${MSSQL_TABLES:-}" && "$TARGET_DB" == "FAF12_Kavos" ]]; then
-    export MSSQL_TABLES="BSMoneda:MonedaID:merge,BSProducto:ProductoID:merge,BSOrganizacion:OrganizacionID:merge,BSTransaccion:TransaccionID:merge,BSOperacion:TransaccionID:merge,DMart_Ventas::replace,DMart_VentasProductoCliente::replace"
-    export MSSQL_PIPELINE_NAME="${MSSQL_PIPELINE_NAME:-bronze_mssql_faf12}"
-  fi
-
-  echo "==> [3/4] Ingestando datos de MSSQL [$TARGET_DB] hacia DuckLake (Bronze)..."
-  /workspace/bronze/.venv/bin/python bronze/fast_mssql.py all
+  echo "    Cargando Parquet hacia DuckLake (Bronze, reemplazo total por tabla)..."
+  "$BRONZE_PY" bronze/load_parquet.py --src "$PARQUET_OUT" \
+    --report-json "$PARQUET_OUT/bronze-load-report.json"
 else
   echo "    Sin archivos .bak/.tar en ./mssql-backup/ (se omite ingesta MSSQL)."
 fi
