@@ -141,10 +141,19 @@ services:
       PREFECT_SCHEME: ${PREFECT_SCHEME:-http}
       PREFECT_HOST: ${DOCKER_PREFECT_HOST:-prefect-server}
       PREFECT_PORT: "${PREFECT_INTERNAL_PORT:-4200}"
+      # El bootstrap también ingiere, así que también tiene que dejar la marca
+      # de aplicado en el estado persistido. Sin este volumen la marca caía en
+      # el filesystem del contenedor: se perdía al terminar lake-init y
+      # prefect-serve seguía viendo `applied` vacío, o sea la guarda de
+      # antigüedad sin referencia. El path tiene que ser el mismo que usa el
+      # scheduler.
+      ACQUIRE_STATE_PATH: /workspace/state/.acquire_state.json
+      ACQUIRE_FINAL_DIR: /workspace/mssql-backup
     volumes:
       - ./mssql-backup:/workspace/mssql-backup
       - ./mssql-fast:/workspace/mssql-fast
       - ./backups:/workspace/backups
+      - serve-state:/workspace/state
     depends_on:
       postgres-catalog:
         condition: service_healthy

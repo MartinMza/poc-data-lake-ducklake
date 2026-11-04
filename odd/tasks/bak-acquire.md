@@ -546,3 +546,49 @@ Los volúmenes viejos no se borran, quedarían huérfanos y recuperables, pero e
 sistema arrancaría mintiendo sobre su estado. Si alguna vez se hace el rename,
 es una migración planificada —parar el stack, copiar volúmenes, verificar
 conteos— no un cambio de una línea.
+
+### L17 — Rename completo del proyecto compose (decisión del usuario)
+
+El usuario pidió dar de baja los contenedores viejos, cambiar el nombre y correr
+todo de nuevo. Se agregó `name: kavos-lake` al compose, que antes se derivaba del
+directorio del repo.
+
+**Qué se hizo con los datos.** `docker compose down` **sin `-v`**: los 8
+volúmenes `dulse_*` (≈1,9 GB, incluido `dulse_garage-data` con el lago y
+`dulse_serve-state` con la guarda) siguen en disco como rollback. El stack nuevo
+arranca con volúmenes `kavos-lake_*` vacíos y se reconstruye solo:
+`container_init.sh` descomprime el `.bak.tar.gz`, restaura la base y la ingiere
+a Parquet. No hizo falta restaurar nada a mano.
+
+**Por qué se pudo arrancar de cero sin drama.** El artefacto de 1,2 GB está en
+`./mssql-backup` (bind mount), así que la fuente del rebuild es el mismo backup
+que ya estaba cargado: el resultado tiene que dar los mismos conteos. Rollback:
+volver a sacar `name:`, `docker compose down` y `up` sobre los `dulse_*`.
+
+**Cuidado con el orden.** `down` se corrió ANTES de agregar `name:`; al revés,
+compose habría buscado el proyecto nuevo y dejado el viejo corriendo. Y
+`lake-init` se levantó antes que `prefect-serve` a propósito: el scheduler y el
+init escriben los dos en el lago, y no conviene que coincidan en el arranque.
+
+**Resultado del rebuild.** Volvió a dar lo mismo que antes del rename:
+**788 tablas, 23.225.319 filas**, `lake-init` exit 0, API arriba en 3 s, 6
+contenedores con volúmenes `kavos-lake_*`. Los 8 `dulse_*` siguen en disco como
+rollback.
+
+**Dos defectos que el rebuild destapó.** El camino de bootstrap no usa la lógica
+de adquisición ni la de retención, así que rompe dos invariantes:
+
+1. Dejó el `.bak` descomprimido de **7,6 GB** junto al `.tar.gz`:
+   `mssql-backup/` pasó de 1,2 GB a **8,3 GB** con 2 artefactos fechados. El log
+   del propio script dice "restaura temporal y limpia": la promesa estaba en el
+   mensaje, no en el código. Lo detectó `verify_stack.sh`, que desde L14 cuenta
+   artefactos fechados.
+2. No creó `/workspace/state/.acquire_state.json`, así que `applied` quedó
+   vacío y la guarda de antigüedad sin referencia. Es el mismo agujero de L14,
+   en un tercer camino: la corrección anterior cubrió el flow
+   (`applied_id_for`) pero no `container_init.sh`.
+
+Moraleja que se repite en esta sesión: **cada camino nuevo que ingiere necesita
+la misma retención y la misma marca que el camino feliz.** El de bootstrap
+existía desde antes y nadie lo había mirado porque no se lo ejercitaba: recién
+al reconstruir todo desde cero se vio.
