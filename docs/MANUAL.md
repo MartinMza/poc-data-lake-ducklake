@@ -280,6 +280,7 @@ Buscá tu síntoma. Si no está acá, el log del servicio suele decir la verdad:
 | 404 en `/api/v1/kpis/*` | los KPIs se fueron con dbt | no existen más, usá `POST /api/v1/query` |
 | 401 al loguear con password con `ñ` | el password no coincide | es correcto: credencial inválida, nunca un 500 |
 | los tests fallan por datos faltantes | stack abajo o lake vacío | pasos 1, 2 y 3 de "5 minutos" |
+| `FATAL: password authentication failed for user "ducklake"` en `lake-init` | los secretos del `.env` no coinciden con los que quedaron grabados en el volumen | `./scripts/verificar_variables.sh`, y después alinear o recrear volúmenes (ver *Secretos que se graban una sola vez*) |
 | el `.bak` no aparece | está en `mssql-backup/` con otro nombre | `ls mssql-backup/` |
 | *la ventana de la firma insuficiente* | el link presignado dura 12 h (`X-Amz-Expires=43200`) | pedir un link nuevo; con `X-Amz-Expires=604800` (7 días) la falla desaparece |
 | *host fuera de la allowlist* | `ACQUIRE_LINK_HOSTS` no incluye el bucket | agregar el host exacto, nunca un comodín libre |
@@ -422,6 +423,53 @@ deja de servir. Un usuario deshabilitado no puede usar el link.
 - los campos de contraseña tienen botón **Ver** para revisarlos antes de guardar;
 - **resetear la contraseña corta las sesiones del panel del usuario, no sus API keys**;
 - **deshabilitar** corta todo: sesión, keys y JWT en el acto.
+
+### Secretos que se graban una sola vez
+
+Algunos secretos del `.env` **sólo se usan cuando el volumen se crea por
+primera vez**. Después quedan grabados ahí y el `.env` ya no los cambia:
+
+| Secreto | Dónde queda grabado |
+|---|---|
+| `CATALOG_PASSWORD` | adentro de la base de Postgres |
+| `MSSQL_SA_PASSWORD` | adentro de la base de SQL Server |
+| claves de Garage | adentro del volumen de metadatos |
+
+Esto no es un defecto del proyecto: así se comportan esas tres imágenes. La
+consecuencia práctica es que **regenerar el `.env` con `--random-secrets` sobre
+un stack que ya existe rompe las tres cosas a la vez**, y el síntoma aparece
+lejos de la causa: `lake-init` falla en `[1/4]` con *password authentication
+failed*, o la extracción no puede entrar a SQL Server, o Garage rechaza las
+claves S3.
+
+Las dos salidas son:
+
+```bash
+# A. Volúmenes nuevos: los secretos del .env pasan a ser los vigentes.
+#    Se pierde el lago; se reconstruye del .bak de ./mssql-backup/ en ~10 minutos.
+docker compose down -v && docker compose up -d
+
+# B. Alinear las credenciales sin borrar nada.
+echo "ALTER USER ducklake WITH PASSWORD '<la del .env>';" \
+  | docker compose exec -T postgres-catalog psql -U ducklake -d postgres
+```
+
+La regla que evita el problema: **generá el `.env` antes del primer arranque, y
+después no lo vuelvas a regenerar**. Si necesitás cambiarlo, cambiá también la
+credencial que quedó grabada.
+
+### Verificar que las variables lleguen a destino
+
+```bash
+./scripts/verificar_variables.sh
+```
+
+Recorre la cadena completa y dice dónde se corta: `.env` → variables del entorno
+(en Portainer, éstas ganan sobre el `.env`) → lo que resuelve `docker compose` →
+lo que recibió cada contenedor → si el catálogo acepta esa password. La última
+prueba se hace **desde otro contenedor**, porque dentro del propio Postgres el
+socket y el loopback son `trust` y cualquier password pasaría. Sale con código 1
+si algo no coincide. No imprime secretos: muestra largos.
 
 ### Primer arranque
 
