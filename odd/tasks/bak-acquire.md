@@ -520,3 +520,29 @@ avisaba cuando la API estaba caída; ahora el script falla.
 `run_query`, `list_snapshots`), `preview_rows(mssql_bs_moneda, 2)` y
 `describe_table` devolviendo datos reales, e `instructions` nuevas servidas por
 el contenedor.
+
+### L16 — Nombre de imagen, y por qué el proyecto se sigue llamando `dulse`
+
+`lake-api` era el único servicio del compose que buildeaba sin `image:`, así que
+el nombre se derivaba del directorio del repo: contenedor `kavos-lake-api` con
+imagen `dulse-lake-api`. Rename a medias. Se fijó `image: kavos-lake-api:latest`,
+igual que el resto (`kavos-lake-pipeline`, `kavos-lake-garage`, `kavos-lake-mssql`).
+
+**Lo que NO se toca: el nombre del proyecto.** `docker-compose.yml` no tiene
+`name:`, así que se deriva del directorio y todos los volúmenes son `dulse_*`:
+`dulse_serve-state`, `dulse_mssql-data`, `dulse_pgcatalog-data`,
+`dulse_garage-data`, `dulse_prefect-data`…
+
+Agregar `name: kavos-lake` parece una prolijidad y es una trampa: compose crearía
+volúmenes nuevos y vacíos. Consecuencias concretas:
+
+- `serve-state` vacío → `applied: none` → **la guarda de antigüedad se
+  desactiva en silencio**, que es el defecto de L14 exactamente.
+- `garage-data` vacío → el lago aparece sin datos (los archivos Parquet viven
+  ahí).
+- `mssql-data` / `pgcatalog-data` vacíos → sin base ni catálogo.
+
+Los volúmenes viejos no se borran, quedarían huérfanos y recuperables, pero el
+sistema arrancaría mintiendo sobre su estado. Si alguna vez se hace el rename,
+es una migración planificada —parar el stack, copiar volúmenes, verificar
+conteos— no un cambio de una línea.

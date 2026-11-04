@@ -225,6 +225,11 @@ services:
     build:
       context: .
       dockerfile: docker/Dockerfile.api
+    # Sin `image:` el nombre salía del directorio del repo (dulse-lake-api), así
+    # que el rename del proyecto quedaba a medias: el contenedor se llamaba
+    # kavos-lake-api y la imagen dulse-lake-api. Es el único servicio que
+    # buildea sin nombre fijo; el resto usa kavos-lake-*.
+    image: kavos-lake-api:latest
     container_name: kavos-lake-api
     restart: unless-stopped
     ports:
