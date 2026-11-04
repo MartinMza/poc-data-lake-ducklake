@@ -57,6 +57,13 @@ Puedes configurar tu archivo `.env` de forma amigable y guiada (revisa puertos l
 ./configure.sh --check           # Diagnóstico de puertos, seguridad y verificación del .env
 ```
 
+El asistente también configura la **adquisición automática del backup** (cuenta
+IMAP de Gmail, app password, allowlist de hosts, ventana de búsqueda y cuántos
+backups conservar). Si dejás la cuenta vacía, la adquisición queda desactivada y
+seguís cargando el `.bak` a mano. `--check` reporta si quedó operativa o
+incompleta: una adquisición mal configurada se salta en éxito y no baja nada, así
+que el estado tiene que decirse en voz alta.
+
 ## Setup
 
 Un solo comando idempotente (configura `.env` automáticamente si no existe, levanta contenedores, corre bootstrap,

@@ -9,6 +9,7 @@ para cada despliegue (JWT, Garage S3, Postgres y SQL Server).
 
 import argparse
 import datetime
+import getpass
 import os
 import re
 import secrets
@@ -257,17 +258,22 @@ def prompt_input(
     default: str = "",
     validator: callable = None,
     help_text: str = "",
+    secret: bool = False,
 ) -> str:
-    """Solicita un valor al usuario con un default claro y reintentos amigables."""
+    """Solicita un valor al usuario con un default claro y reintentos amigables.
+
+    `secret=True` no ecoa lo tipeado. Se usa para credenciales que no deben
+    quedar visibles en la terminal ni en el scrollback de la sesión.
+    """
     if help_text:
         print(f"  {dim('ℹ️  ' + help_text)}")
-    
+
     default_hint = f" [{green(default)}]" if default else ""
     prompt_str = f"  👉 {prompt}{default_hint}: "
-    
+
     while True:
         try:
-            val = input(prompt_str).strip()
+            val = (getpass.getpass(prompt_str) if secret else input(prompt_str)).strip()
         except (KeyboardInterrupt, EOFError):
             print("\n" + yellow("Operación cancelada por el usuario."))
             sys.exit(0)
@@ -289,6 +295,12 @@ def validate_port(val: str) -> tuple[bool, str]:
     p = int(val)
     if not (1 <= p <= 65535):
         return False, "El puerto debe estar entre 1 y 65535."
+    return True, ""
+
+
+def validate_positive_int(val: str) -> tuple[bool, str]:
+    if not val.isdigit() or int(val) < 1:
+        return False, "Tiene que ser un entero mayor o igual a 1."
     return True, ""
 
 
@@ -371,7 +383,7 @@ def run_step_by_step_mode(force_backup: bool = False, skip_backup: bool = False)
     chosen = defaults.copy()
 
     # --- 1. PUERTOS Y ACCESIBILIDAD ---
-    print(f"\n{bold(cyan('📌 [1/4] Puertos de los Servicios Locales'))}")
+    print(f"\n{bold(cyan('📌 [1/5] Puertos de los Servicios Locales'))}")
     print("  Define en qué puertos de tu máquina escucharán los servicios.")
     
     # API Port
@@ -411,7 +423,7 @@ def run_step_by_step_mode(force_backup: bool = False, skip_backup: bool = False)
     chosen["MSSQL_PORT"] = sql_port
 
     # --- 2. ALMACENAMIENTO LAGO (DUCKLAKE & S3) Y SECRETOS GARAGE ---
-    print(f"\n{bold(cyan('📦 [2/4] Almacenamiento del Lakehouse y Garage S3'))}")
+    print(f"\n{bold(cyan('📦 [2/5] Almacenamiento del Lakehouse y Garage S3'))}")
     
     def_bucket = get_initial("LAKEHOUSE_BUCKET", "lakehouse")
     bucket = prompt_input("Nombre del bucket S3 para los archivos Parquet", def_bucket, help_text="Bucket en Garage donde vive el lago.")
@@ -430,7 +442,7 @@ def run_step_by_step_mode(force_backup: bool = False, skip_backup: bool = False)
     chosen["GARAGE_S3_SECRET"] = gar_sec
 
     # --- 3. SEGURIDAD Y BASES DE DATOS ---
-    print(f"\n{bold(cyan('🔐 [3/4] Seguridad y Contraseñas de Base de Datos'))}")
+    print(f"\n{bold(cyan('🔐 [3/5] Seguridad y Contraseñas de Base de Datos'))}")
     
     # Postgres Password
     def_pg_pw = get_initial("CATALOG_PASSWORD", generate_postgres_password())
@@ -452,7 +464,7 @@ def run_step_by_step_mode(force_backup: bool = False, skip_backup: bool = False)
     chosen["AUTH_JWT_SECRET"] = jwt
 
     # --- 4. PANEL WEB Y CORS ---
-    print(f"\n{bold(cyan('🌐 [4/4] Acceso Web y CORS (Host y Puerto por separado)'))}")
+    print(f"\n{bold(cyan('🌐 [4/5] Acceso Web y CORS (Host y Puerto por separado)'))}")
     print(f"  {dim('Regla del PoC: host y puerto van separados; la app compone los orígenes.')}")
     
     def_cors_scheme = get_initial("CORS_SCHEME", "http")
@@ -466,6 +478,58 @@ def run_step_by_step_mode(force_backup: bool = False, skip_backup: bool = False)
     def_cors_port = get_initial("CORS_PORT", chosen["API_PORT"])
     cors_port = prompt_input("Puerto para CORS (o vacío si el host no lleva puerto)", def_cors_port, help_text="Puerto del frontend/panel que consulta la API.")
     chosen["CORS_PORT"] = cors_port
+
+    # --- 5. ADQUISICIÓN AUTOMÁTICA DEL BACKUP ---
+    print(f"\n{bold(cyan('📥 [5/5] Adquisición automática del backup (opcional)'))}")
+    print(f"  {dim('Con la cuenta vacía la adquisición se salta: seguís cargando el .bak a mano.')}")
+
+    imap_user = prompt_input(
+        "Cuenta de Gmail que recibe el aviso (vacío para desactivar)",
+        get_initial("ACQUIRE_IMAP_USER", ""),
+        help_text="El poller lee este buzón por IMAP. Ej: mail.drive.mm@gmail.com",
+    )
+    chosen["ACQUIRE_IMAP_USER"] = imap_user
+
+    if imap_user:
+        print(f"  {dim('Gmail exige una app password con verificación en dos pasos activa; la')}")
+        print(f"  {dim('contraseña normal de la cuenta NO sirve para IMAP.')}")
+        chosen["ACQUIRE_IMAP_APP_PASSWORD"] = prompt_input(
+            "App password de Gmail (16 caracteres, no se muestra)",
+            get_initial("ACQUIRE_IMAP_APP_PASSWORD", ""),
+            secret=True,
+            help_text="Gmail: Cuenta, Seguridad, Contraseñas de aplicaciones.",
+        )
+
+        chosen["ACQUIRE_LINK_HOSTS"] = prompt_input(
+            "Allowlist de hosts de descarga (separados por comas)",
+            get_initial(
+                "ACQUIRE_LINK_HOSTS",
+                "finnegans-virginia-db-backup-diario.s3.us-east-1.amazonaws.com",
+            ),
+            help_text=(
+                "Hosts exactos o *.dominio. Un comodín libre habilitaría cualquier "
+                "bucket de cualquier cuenta."
+            ),
+        )
+
+        chosen["ACQUIRE_SINCE_DAYS"] = prompt_input(
+            "Días hacia atrás a buscar en el buzón",
+            get_initial("ACQUIRE_SINCE_DAYS", "3"),
+            validate_positive_int,
+            help_text=(
+                "Menor que la validez de la firma del link (12 h): más atrás son "
+                "correos que ya no se pueden descargar."
+            ),
+        )
+
+        chosen["ACQUIRE_KEEP_BACKUPS"] = prompt_input(
+            "Cuántos backups conservar en mssql-backup/",
+            get_initial("ACQUIRE_KEEP_BACKUPS", "1"),
+            validate_positive_int,
+            help_text="1 = un solo archivo: el nuevo reemplaza al anterior tras verificar checksum.",
+        )
+    else:
+        print(f"  {green('✔')} Adquisición desactivada: carga manual con MSSQL_BAK_PATH.")
 
     # Confirmación final
     api_url = f"http://localhost:{chosen['API_PORT']}"
@@ -487,6 +551,14 @@ def run_step_by_step_mode(force_backup: bool = False, skip_backup: bool = False)
     print(f"  • SQL Server PW   : {mask_secret(chosen['MSSQL_SA_PASSWORD'])}")
     print(f"  • JWT Secret      : {mask_secret(chosen['AUTH_JWT_SECRET'])}")
     print(f"  • CORS Orígenes   : {cyan(cors_preview)} {dim(cors_detail)}")
+    if chosen.get("ACQUIRE_IMAP_USER"):
+        cuenta = chosen["ACQUIRE_IMAP_USER"]
+        cada = chosen.get("ACQUIRE_POLL_HOURS", "4")
+        cuantos = chosen.get("ACQUIRE_KEEP_BACKUPS", "1")
+        detalle = f"cada {cada} h, deja {cuantos} backup(s)"
+        print(f"  • Adquisición      : {cyan('activada')} {dim(cuenta + ' · ' + detalle)}")
+    else:
+        print(f"  • Adquisición      : {dim('desactivada (carga manual del .bak)')}")
     
     conf = prompt_input("\n¿Deseas guardar esta configuración en .env? (S/n)", "S").upper()
     if not conf.startswith("S"):
@@ -617,7 +689,46 @@ def run_diagnose_mode() -> None:
     else:
         print(f"    {yellow('⚠️  No existe la carpeta ./mssql-backup/')} (se creará automáticamente al configurar).")
 
+    # 7. Adquisición automática del backup (spec bak-acquire)
+    print(f"\n  {bold('Adquisición automática del backup:')}")
+    _report_adquisicion(cur)
+
     print(f"\n{green('Diagnóstico completado.')}")
+
+
+def _report_adquisicion(values: dict[str, str]) -> None:
+    """Informa si la adquisición automática quedó operativa.
+
+    Sólo imprime el largo de la app password, nunca el valor. Un pipeline que
+    arranca y no baja nada porque falta la allowlist es indistinguible de uno
+    que funciona: por eso el estado se dice en voz alta.
+    """
+    cuenta = values.get("ACQUIRE_IMAP_USER", "")
+    app_pw = values.get("ACQUIRE_IMAP_APP_PASSWORD", "")
+    hosts = values.get("ACQUIRE_LINK_HOSTS", "")
+    if not cuenta and not hosts:
+        print(f"  {dim('Adquisición: desactivada (carga manual con MSSQL_BAK_PATH).')}")
+        return
+    if not cuenta or not hosts or not app_pw:
+        faltan = [
+            nombre
+            for nombre, valor in (
+                ("ACQUIRE_IMAP_USER", cuenta),
+                ("ACQUIRE_IMAP_APP_PASSWORD", app_pw),
+                ("ACQUIRE_LINK_HOSTS", hosts),
+            )
+            if not valor
+        ]
+        print(
+            f"  {yellow('⚠️  Adquisición incompleta')}: falta "
+            f"{', '.join(faltan)}. La tarea se salta en éxito y no baja nada."
+        )
+        return
+    print(
+        f"  {green('✔')} Adquisición activa: {cuenta} "
+        f"(app password de {len(app_pw.replace(' ', ''))} caracteres), "
+        f"deja {values.get('ACQUIRE_KEEP_BACKUPS', '1')} backup(s)."
+    )
 
 
 def show_summary(values: dict[str, str]) -> None:
@@ -648,6 +759,9 @@ def show_summary(values: dict[str, str]) -> None:
 {cyan("║")}     SETUP TOKEN impreso en consola para crear tu superAdmin.                {cyan("║")}
 {cyan("╚═══════════════════════════════════════════════════════════════════════════════╝")}
 """)
+
+
+    _report_adquisicion(values)
 
 
 def main():
