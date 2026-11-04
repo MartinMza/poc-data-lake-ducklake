@@ -165,6 +165,7 @@ Eso es por diseño, no un olvido.
 | correr la orquestación | `orchestration/.venv/bin/python orchestration/flow.py` | adquiere el `.bak` del correo; sin `ACQUIRE_*` usa `MSSQL_BAK_PATH` |
 | bajar el backup solo, con schedule | `orchestration/.venv/bin/python orchestration/serve.py` | cron según `ACQUIRE_POLL_HOURS` (default 4 h) |
 | podar backups viejos | `orchestration/.venv/bin/python scripts/prune_backups.py` | deja **un** backup; dry-run por defecto, `--apply` borra |
+| automatizar la ingesta | `docker compose up -d prefect-serve` | exige `ACQUIRE_IMAP_*` en `.env`; corre cada `ACQUIRE_POLL_HOURS` |
 | restaurar el `.bak` | `./scripts/restore_mssql.sh <archivo>.bak FAF12_Kavos` | idempotente, usa `REPLACE` |
 | limpiar datos sintéticos viejos | `bronze/.venv/bin/python scripts/purge_sample_data.py` | dry-run por defecto; `--apply` ejecuta |
 | generar una API key | `openssl rand -hex 24` | 24 caracteres mínimo |
@@ -198,6 +199,7 @@ Buscá tu síntoma. Si no está acá, el log del servicio suele decir la verdad:
 | el `.bak` no aparece | está en `mssql-backup/` con otro nombre | `ls mssql-backup/` |
 | *la ventana de la firma insuficiente* | el link presignado dura 12 h (`X-Amz-Expires=43200`) | pedir un link nuevo; con `X-Amz-Expires=604800` (7 días) la falla desaparece |
 | *host fuera de la allowlist* | `ACQUIRE_LINK_HOSTS` no incluye el bucket | agregar el host exacto, nunca un comodín libre |
+| el scheduler corre pero no baja nada | `ACQUIRE_IMAP_USER` vacío: `acquire` se salta en éxito | cargar `ACQUIRE_IMAP_USER` y `ACQUIRE_IMAP_APP_PASSWORD` en `.env` y recrear el servicio |
 | el poller no encuentra nunca el correo | remitente o asunto no coinciden | el aviso real es de `info@finnegans.com.ar` con asunto `Backup de Base de Datos Disponible`; son los defaults de `kavos_acquire/defaults.py` |
 | *backup descartado por antigüedad* | el artefacto no es más nuevo que el último aplicado | es correcto: mirá qué correo se está procesando |
 | *estado corrupto* en `.acquire_state.json` | JSON ilegible | revisarlo a mano; borrarlo **desactiva** la guarda de antigüedad |

@@ -17,6 +17,18 @@ reintentos configurables y logs centralizados en Prefect.
 Schedule declarado (sin cron externo): `orchestration/serve.py` sirve el flow
 con un cron derivado de `ACQUIRE_POLL_HOURS` (default 4 h).
 
+En el stack, ese scheduler es el servicio **`prefect-serve`**
+(`docker compose up -d prefect-serve`, `restart: unless-stopped`). Reusa la
+imagen `kavos-lake-pipeline`, así que corre el mismo camino de datos que
+`lake-init` (ODBC + venvs pre-construidos), contra `mssql`, `garage` y
+`postgres-catalog`. Monta `./mssql-backup` y dos volúmenes: `serve-state`
+(estado y marca de extracción) y `serve-parquet`. **Si `serve-state` se
+pierde, la guarda de antigüedad olvida el último backup aplicado** y podría
+volver a cargar uno viejo.
+
+Con el servicio corriendo no hace falta —ni conviene— lanzar `flow.py` a mano:
+es el mismo flow y competirían por el mismo estado.
+
 El aviso real de Finnegans llega por Amazon SES desde
 `info@finnegans.com.ar` con asunto `Backup de Base de Datos Disponible`. Esos
 dos valores son defaults en `kavos_acquire/defaults.py` —no hace falta

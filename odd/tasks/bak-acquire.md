@@ -356,3 +356,29 @@ Corrección de diseño durante la implementación: `freed_bytes` era una propert
 que leía el disco, así que el resumen del CLI —impreso **después** de aplicar—
 siempre decía "0 bytes liberados". Pasó a capturarse en el momento de
 planificar.
+
+### L12 — Servicio `prefect-serve` en el stack
+
+El schedule estaba escrito pero nadie lo levantaba: `ACQUIRE_POLL_HOURS` no tenía
+lector. Se agrega el servicio `prefect-serve` a `docker-compose.yml` con
+`restart: unless-stopped`, reusando la imagen `kavos-lake-pipeline` (la misma de
+`lake-init`), que ya trae `bronze/.venv` con ODBC + arrow-odbc y
+`orchestration/.venv` con `prefect==3.8.8` y `httpx`.
+
+Bloqueante preexistente encontrado: `docker/Dockerfile.pipeline` copiaba
+`dbt/requirements.txt`, que dejó de existir al retirarse la capa silver/gold. El
+build de **todo** el stack fallaba, `lake-init` incluido. Se quitaron esas tres
+líneas.
+
+Decisión de estado: `ACQUIRE_STATE_PATH` y `ORCH_RESTORE_MARK` apuntan al
+volumen `serve-state`, no al filesystem del contenedor. Si el estado se perdiera
+al recrear el contenedor, la guarda de antigüedad olvidaría el último backup
+aplicado y podría volver a cargar uno viejo: exactamente el fallo que S3 previene.
+
+Consecuencia operativa: con el servicio corriendo, `flow.py` a mano compite por
+el mismo estado; hay que elegir uno.
+
+**Hallazgo de seguridad del proceso**: `docker compose config` renderiza las
+variables sin enmascarar, así que la app password de Gmail terminó en la salida
+de la sesión. Hay que rotarla. Nunca correr `docker compose config` con la salida
+capturada en un log.
